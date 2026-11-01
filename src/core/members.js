@@ -134,6 +134,29 @@ export function assignedMember(roster = [], key) {
 }
 
 /**
+ * The member whose History row a Re-run repeats, in assignedMember's shape,
+ * or null when the row was nobody's (queued from the panel for no member).
+ * The operator, 2026-11-01: "if I rerun a failed request from history tab it
+ * should show as user requested in the rerun not queued by admin, or it
+ * should show queued by admin for that user". Read from the row itself, not
+ * the roster: a member who has since left every group still asked for it.
+ */
+export function historyRowMember(row) {
+  if (!row) return null;
+  const jid = row.requesterJid ?? null;
+  const number = String(row.requesterNumber ?? '').replace(/[^0-9]/g, '') || null;
+  if (!jid && !number) return null;
+  const display = formatPhone(number);
+  return {
+    key: memberKey({ number, id: jid }),
+    name: String(row.requester ?? '').trim() || display || (jid ? jid.split('@')[0] : number),
+    jid: jid ?? `${number}@s.whatsapp.net`,
+    number,
+    display,
+  };
+}
+
+/**
  * A hand-queued job's requester fields: the assigned member's when there is
  * one, with the admin who queued it kept beside them as `assignedBy`, or the
  * panel's own label when there is not.

@@ -17,7 +17,7 @@ import { verifyPassword } from '../util/crypto.js';
 import { checkTools, fmtBytes, encoderStatus } from '../media/ffmpeg.js';
 import { MODEL_PREFERENCES } from '../core/ai-providers.js';
 import { addTicket, listTickets, setTicketStatus } from '../core/tickets.js';
-import { aggregateMembers, memberDetail, assignedMember, formatPhone, phoneOut, phonesInText } from '../core/members.js';
+import { aggregateMembers, memberDetail, assignedMember, historyRowMember, formatPhone, phoneOut, phonesInText } from '../core/members.js';
 import { parseTvRequest } from '../plugins/tv-requests/parse.js';
 import { parseMediaUrl, urlToRequestText } from '../util/media-url.js';
 import { describeConfigChange, describeValue, changedPaths, describeChange } from '../util/diff.js';
@@ -1924,14 +1924,16 @@ export function createApiRouter({ configStore, bot, queue, linkQueue = null, plu
       const key = `${(r.title ?? r.request ?? '').toLowerCase()}|${r.year ?? ''}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      todo.push(r.request ?? r.title);
+      // Each one goes in as its member's, as History's own Re-run does
+      // (members.js historyRowMember; the operator, 2026-11-01).
+      todo.push({ text: r.request ?? r.title, member: historyRowMember(r) });
     }
 
     const queued = [];
     const skipped = [...sentSince];
-    for (const text of todo) {
+    for (const { text, member } of todo) {
       try {
-        const r = await plugin.requeue(text, ctx, { requester: 'bulk re-run (admin)' });
+        const r = await plugin.requeue(text, ctx, { requester: 'bulk re-run (admin)', member });
         queued.push(`${r.title} (${r.year})`);
       } catch (err) {
         skipped.push(`${text}: ${err.message}`);
@@ -2096,6 +2098,11 @@ export function createApiRouter({ configStore, bot, queue, linkQueue = null, plu
     const key = String(req.body?.member ?? '').trim();
     if (!key) return null;
     return assignedMember(aggregateMembers(bot.groupsWithMembers(), bot.memberActivity?.all() ?? {}), key);
+  };
+  /** The History row { kind, id } names, from the movie or the TV store, or null. */
+  const historyRow = ({ kind, id } = {}) => {
+    const ns = kind === 'tv' ? 'tv-requests' : 'movie-requests';
+    return (stateStore.namespace(ns).get('history', []) ?? []).find((r) => r?.id === String(id)) ?? null;
   };
   /** " for <name>" in an audit row, when the job was assigned. */
   const forWhom = (member) => (member ? ` for ${member.name}${member.display && member.display !== member.name ? ` ${member.display}` : ''}` : '');
@@ -2305,6 +2312,9 @@ export function createApiRouter({ configStore, bot, queue, linkQueue = null, plu
     // the limit, and the answer says so. The bulk re-run still obeys it.
     let member;
     try { member = memberFor(req); } catch (err) { return res.status(400).json({ ok: false, error: err.message }); }
+    // History's Re-run names the row it repeats: the request goes in again as
+    // that member's, queued by an admin for them (members.js historyRowMember).
+    if (!member && req.body?.fromHistory?.id) member = historyRowMember(historyRow(req.body.fromHistory));
     const tryTv = async () => tv.plugin.requeue(query, tv.ctx, { requester: 'manual (admin)', overLimit: true, member });
     const tryMovie = async () => movie.plugin.requeue(query, movie.ctx, { requester: 'manual (admin)', overLimit: true, member });
     const waiting = () => queue.requestCounts?.().waiting ?? queue.pending.length;

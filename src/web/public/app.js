@@ -1549,13 +1549,22 @@ const queuedLabel = (r) => (r.kind === 'tv'
   + (r.withheldNote ? ` · ${r.withheldNote}` : '')
   + (r.notQueued?.length ? ` · not queued: ${r.notQueued.join(' · ')}` : '');
 
-window.requeue = async (text) => {
+// From History, `from` names the row ({ kind, id }): the re-run goes in as
+// that member's request, queued by an admin for them.
+window.requeue = async (text, from = null) => {
   try {
-    const r = await api('POST', '/requeue', { text });
+    const r = await api('POST', '/requeue', { text, ...(from ? { fromHistory: from } : {}) });
     toast(queuedLabel(r));
     loadHistory();
   } catch (err) { toast(err.message, true); }
 };
+
+window.requeueRow = (btn) => requeue(btn.dataset.req, { kind: btn.dataset.kind, id: btn.dataset.id });
+/** History's Re-run, naming the row it repeats so the member keeps it. */
+function rerunButton(x) {
+  return '<button class="btn tiny" style="margin-top:8px" data-req="' + esc(x.request ?? '') + '" data-kind="' + esc(x.kind ?? 'movie')
+    + '" data-id="' + esc(x.id ?? '') + '" onclick="requeueRow(this)">↻ Re-run</button>';
+}
 
 window.moveJob = async (id, dir) => {
   try { await api('POST', `/queue/${id}/move`, { dir }); }
@@ -2179,7 +2188,7 @@ function historyRow(x) {
             : `<span class="tag ${x.status}">${esc(x.status)}</span>`}
         </div>
         <div class="item-sub">
-          "${esc(x.typed ?? x.request)}" · ${esc(phoneOut(x.requester) ?? '?')}${historyNumber(x) ? ` · ${esc(historyNumber(x))}` : ''}
+          "${esc(x.typed ?? x.request)}" · ${esc(phoneOut(x.requester) ?? '?')}${historyNumber(x) ? ` · ${esc(historyNumber(x))}` : ''}${x.assignedBy ? ' · <span class="muted">queued by an admin for them</span>' : ''}
           ${x.detail ? `<br>${esc(x.detail)}` : ''}
           ${historyNotes(x)}
           ${x.rerun ? `<br><span class="muted">Re-run ${esc(fmtDateTime(x.rerun.at))}: ${esc(x.rerun.why ?? 'it arrived on the server')}${
@@ -2200,7 +2209,7 @@ function historyRow(x) {
           // Re-run queues panel work, which goes to the MAIN posts group. A
           // test request re-run from here would land in front of every member.
           ? '<div class="small muted" style="margin-top:8px">beta test — re-run it by asking again in the beta group</div>'
-          : `<button class="btn tiny" style="margin-top:8px" onclick="requeue(${JSON.stringify(x.request).replace(/"/g,'&quot;')})">↻ Re-run</button>`}
+          : rerunButton(x)}
       </div>`;
 }
 
@@ -2435,7 +2444,7 @@ window.viewLogFile = async (name) => {
 
 $('btn-logfiles-refresh').addEventListener('click', loadLogFiles);
 $('btn-logfiles-email').addEventListener('click', () =>
-  emailAction('btn-logfiles-email', '/email/send-log', { label: "today's debug log" }, 'Log emailed'));
+  emailAction('btn-logfiles-email', '/email/send-log', { label: 'today’s debug log' }, 'Log emailed'));
 
 /* --------------------------- live log filter ----------------------- */
 const LEVEL_RANK = { debug: 0, info: 1, warn: 2, error: 3 };
