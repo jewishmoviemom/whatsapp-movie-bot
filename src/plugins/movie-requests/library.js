@@ -72,6 +72,12 @@ const yearGap = (a, b) => (Number(a) && Number(b) ? Math.abs(Number(a) - Number(
  */
 const IGNORES_PROVIDER_FILTER = new Set();
 
+/** The whole library's films by server, for libraryIndex(): six hours. */
+const LIBRARY_INDEX = new Map();
+const LIBRARY_INDEX_TTL_MS = 6 * 3600_000;
+/** For tests: forget every cached library listing. */
+export function forgetLibraryIndex() { LIBRARY_INDEX.clear(); }
+
 /** For tests: forget which servers were found to ignore AnyProviderIdEquals. */
 export function forgetProviderFilterSupport() { IGNORES_PROVIDER_FILTER.clear(); }
 
@@ -578,6 +584,35 @@ class JellyfinProvider {
       logger.debug(`Jellyfin: ${primary.alternates.length} alternate copy/copies of "${item0Name(match.item)}" available if the first fails`);
     }
     return primary;
+  }
+
+  /**
+   * Every film the bot's account can see, as { title, year, imdbId, tmdbId },
+   * for a film the library names otherwise than any search can find
+   * (named-otherwise.js). One listing - 21,018 films, 11 MB and 5 s on the
+   * live server, 2026-10-28 - kept for LIBRARY_INDEX_TTL_MS per server, and
+   * asked for only when a request needs it.
+   */
+  async libraryIndex({ signal, timeoutMs = 120000 } = {}) {
+    const cached = LIBRARY_INDEX.get(this.base);
+    if (cached && Date.now() - cached.at < LIBRARY_INDEX_TTL_MS) return cached.films;
+    await this.ensureToken(signal);
+    const url = new URL(`${this.base}/Items`);
+    url.searchParams.set('IncludeItemTypes', 'Movie');
+    url.searchParams.set('Recursive', 'true');
+    url.searchParams.set('Fields', 'ProductionYear,ProviderIds');
+    url.searchParams.set('EnableImages', 'false');
+    url.searchParams.set('EnableUserData', 'false');
+    if (this.userId) url.searchParams.set('UserId', this.userId);
+    const res = await fetchWithTimeout(url, { headers: this.headers(), signal }, timeoutMs, 'Jellyfin');
+    if (!res.ok) throw new Error(`Jellyfin HTTP ${res.status}`);
+    const data = await res.json();
+    const films = (data.Items ?? []).map((i) => ({
+      title: i.Name, year: i.ProductionYear ?? null, imdbId: imdbOf(i),
+      tmdbId: String(i.ProviderIds?.Tmdb ?? i.ProviderIds?.tmdb ?? '').trim() || null,
+    }));
+    LIBRARY_INDEX.set(this.base, { at: Date.now(), films });
+    return films;
   }
 
   /** Plain title search, used by researchLibrary() to gather candidates. */

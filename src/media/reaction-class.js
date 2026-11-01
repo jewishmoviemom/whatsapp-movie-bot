@@ -28,7 +28,7 @@
 
 /** Reactions that are the last word on a request. Never shed. */
 export const TERMINAL_KEYS = [
-  'rated', 'theaters', 'notFound', 'needYear', 'needSeason', 'notInLibrary',
+  'rated', 'nudity', 'theaters', 'notFound', 'needYear', 'needSeason', 'notInLibrary',
   'failed', 'skipped', 'cancelled', 'tooFast', 'done',
   // Several films in one request: refused, and the member is to send each on
   // its own - the ☝️ is all a member outside the notifications group sees.

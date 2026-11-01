@@ -422,8 +422,17 @@ export function codeLeftIn(show) {
 const SEASON_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
 const NUM_WORD = Object.keys(SEASON_WORDS).join('|');
+/**
+ * "session" typed for "season": YR's "euphoria session 03 E01-08" (2026-10-26
+ * 22:17 UTC) was answered "no series matching" because the whole phrase was
+ * taken as the title. Only read so when a show name stands before it and an
+ * episode marker follows the number, so the film "Session 9" and a title like
+ * "Session 9 2001" are left alone.
+ */
+const SESSION_TYPO = /(\S.*?\s)sessions?(\s*\d{1,2}[\s,.:;&-]*(?:e|ep|eps|episodes?)\s*\d)/i;
 function seasonWordToDigit(text) {
   return text
+    .replace(SESSION_TYPO, (m, before, after) => `${before}season${after}`)
     .replace(new RegExp(String.raw`\b(seasons?|series)\s+(${NUM_WORD})\b`, 'gi'), (m, w, n) => `${w} ${SEASON_WORDS[n.toLowerCase()]}`)
     .replace(new RegExp(String.raw`\b(${NUM_WORD})\s+(season|series)\b`, 'gi'), (m, n, w) => `${w} ${SEASON_WORDS[n.toLowerCase()]}`);
 }
@@ -446,7 +455,12 @@ function seasonWordToDigit(text) {
  * them on their own (unreadFrom).
  */
 export function parseTvRequest(text) {
-  const raw = spaceGluedWords(seasonWordToDigit(String(text ?? '').trim()));
+  // A season written with three digits ("South Park S029", 2026-10-17, three
+  // requests) matched none of the one-or-two-digit season patterns, so the
+  // code stayed in the show's name and the library answered "no series
+  // matching". A leading zero carries no meaning; drop it.
+  const raw = spaceGluedWords(seasonWordToDigit(String(text ?? '').trim()))
+    .replace(/\bs0(\d{2})(?!\d)/gi, 's$1');
   if (!raw) return { show: '', season: null, episode: null, raw, matched: null };
 
   // A list of episodes, tried first, since a range or a single episode would

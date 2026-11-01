@@ -67,7 +67,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import log from '../util/logger.js';
 import {
-  runFfmpeg, effectiveEncode, fmtBytes, checkSize, videoEncodeArgs, nvencPreset, jobEncoder,
+  runFfmpeg, effectiveEncode, fmtBytes, checkSize, videoEncodeArgs, nvencPreset, jobEncoder, maxVideoBps, minVideoBps,
 } from './ffmpeg.js';
 import { fsyncDir, statOf } from './work-files.js';
 
@@ -119,6 +119,8 @@ export function settingsHash(cfg, version, encoder = 'cpu') {
   ];
   // Only for the GPU, so pieces made on the CPU keep the hash they had.
   if (encoder === 'nvenc') parts.push('h264_nvenc');
+  // A 480p job's bitrate cap: only when set, so other jobs keep theirs too.
+  if (cfg.maxVideoBitrate) parts.push(`maxVideoBitrate=${cfg.maxVideoBitrate}`);
   return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
 }
 const segmentSec = (cfg) => Math.max(1, Number(cfg.segmentSec) || 300);
@@ -600,7 +602,7 @@ export async function encodeSegmented(input, outPath, cfg, {
         // film, with no sign it was working (operator, 2026-09-30,
         // Inception). The bar's share is still the pieces' (`pct` 0 here): it
         // stands for the picture, which is most of the time.
-        await runFfmpeg(['-i', src.input, '-map', '0:a:0', '-vn', '-sn', '-dn', '-c:a', cfg.audioCodec, '-b:a', `${cfg.audioBitrateK}k`,
+        await runFfmpeg(['-i', src.input, '-map', `0:a:${Number(info?.audio?.index ?? 0)}`, '-vn', '-sn', '-dn', '-c:a', cfg.audioCodec, '-b:a', `${cfg.audioBitrateK}k`,
           '-ac', '2', '-f', 'mp4', part], {
           cfg, signal, cwd: work.dir, fd: src.fd,
           durationSec: plan.audio.span || info?.duration || 0,
@@ -630,7 +632,7 @@ export async function encodeSegmented(input, outPath, cfg, {
     /* the pieces */
     const T = Math.floor(cfg.maxOutputBytes * 0.93);
     const V = T - (c.audio?.payload ?? 0) - Math.max(8 * 1024 ** 2, 0.005 * T);
-    const B0 = clamp((V * 8) / (plan.end - plan.start), 400_000, 8_000_000);
+    const B0 = clamp((V * 8) / (plan.end - plan.start), minVideoBps(cfg), maxVideoBps(cfg));
     const totalWork = plan.pieces.reduce((a, p) => a + p.e, 0);
     const workDone = () => plan.pieces.slice(0, c.chunks.length).reduce((a, p) => a + p.e, 0);
     // What was left when this run began: the time left is worked out from
@@ -651,7 +653,7 @@ export async function encodeSegmented(input, outPath, cfg, {
       // or their SPS differ and they cannot be joined (see the header). Its
       // CBR lands as close to the budget as libx264's steering does.
       const B = gpu ? Math.round(B0)
-        : Math.round(clamp(((V - spent) * 8) / (plan.end - p.first), Math.max(400_000, 0.85 * B0), Math.min(8_000_000, 1.15 * B0)));
+        : Math.round(clamp(((V - spent) * 8) / (plan.end - p.first), Math.max(minVideoBps(cfg), 0.85 * B0), Math.min(maxVideoBps(cfg), 1.15 * B0)));
       const run = crypto.randomBytes(3).toString('hex');
       const raw = `v${String(k).padStart(4, '0')}.${run}.raw.ts`;
       const part = `${pieceName(k)}.part`;

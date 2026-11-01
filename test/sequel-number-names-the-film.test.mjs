@@ -373,8 +373,10 @@ console.log('=== the guards resolve as before ===');
   ok(rockyLib?.title === 'Rocky II', `the library's research gives Rocky II for "rocky 2", not Rocky (${rockyLib?.title})`);
   for (const text of ['1917', '2012']) {
     const r = await ask(text);
-    ok(r.found === null && r.calls.length === 0,
-      `"${text}" is all year to OMDb's lookup, as before: no call and no film`);
+    // Changed 2026-10-28 (hourly check 20261028T030001Z): a request that is
+    // only a year is a film titled that, and "1917" was refused for it.
+    ok(r.calls.length > 0 && r.calls[0].startsWith(`t:${text}|`),
+      `"${text}" is asked of OMDb as a title, not dropped as all year (${r.calls.join(', ')})`);
   }
 }
 

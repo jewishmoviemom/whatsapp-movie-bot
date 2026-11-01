@@ -1,4 +1,5 @@
 import { readLibraryNews } from './library-news.js';
+import { nextTicket } from './issue-tickets.js';
 
 /**
  * Every ticket that has been opened, in one list for the panel's Tickets tab:
@@ -11,6 +12,17 @@ import { readLibraryNews } from './library-news.js';
  * admin resolves it; that, and the note they leave, is kept in the state file.
  */
 export const STATUS_NS = 'tickets';
+
+/**
+ * A ticket an admin added by hand, for a problem that never came as an #issue:
+ * one told to them in a private message, on the phone, or seen for themselves.
+ * The operator, 2026-10-30: "make me an option to manually add tickets and of
+ * course you'll reconcile them accordingly". It takes its number from the one
+ * counter, and the hourly check researches it like a member's #issue
+ * (incident-scan.js manualTicketFindings).
+ */
+export const MANUAL_NS = 'manual-tickets';
+const MANUAL_MAX = 1000;
 
 const digits = (n) => String(n ?? '').replace(/\D/g, '');
 
@@ -54,6 +66,23 @@ export function listTickets({ dataDir, stateStore }) {
     });
   }
 
+  // A ticket an admin added.
+  for (const t of stateStore.namespace(MANUAL_NS).get('list', []) ?? []) {
+    if (!t || t.n == null || byNumber.has(t.n)) continue;
+    byNumber.set(t.n, {
+      n: t.n,
+      source: 'manual',
+      at: t.at,
+      who: t.who ?? null,
+      number: t.number ?? null,
+      group: t.group ?? null,
+      text: String(t.text ?? ''),
+      addedBy: t.by ?? null,
+      keeper: false,
+      replyTo: null,
+    });
+  }
+
   return [...byNumber.values()]
     .map((t) => {
       const s = status[t.n];
@@ -79,4 +108,34 @@ export function setTicketStatus({ dataDir, stateStore, now = () => Date.now() },
   all[num] = { status, at: now(), by, note: note ? String(note).slice(0, 500) : null };
   ns.set('status', all);
   return all[num];
+}
+
+const field = (v, max) => {
+  const s = String(v ?? '').replace(/\s+/g, ' ').trim();
+  return s ? s.slice(0, max) : null;
+};
+
+/**
+ * Add a ticket by hand. `text` is what the problem is; `who`, `number` and
+ * `group` say whose it is, when it is a member's. Returns the ticket, or
+ * { error } when there is nothing to say.
+ */
+export function addTicket({ dataDir, stateStore, now = () => Date.now() }, { text, who = null, number = null, group = null, by = null } = {}) {
+  const what = String(text ?? '').trim().slice(0, 2000);
+  if (!what) return { error: 'say what the problem is' };
+  const digitsOnly = digits(number);
+  const t = {
+    n: nextTicket(dataDir),
+    at: now(),
+    text: what,
+    who: field(who, 80),
+    number: digitsOnly.length >= 7 ? digitsOnly.slice(0, 20) : null,
+    group: field(group, 120),
+    by: field(by, 80),
+  };
+  const ns = stateStore.namespace(MANUAL_NS);
+  const list = ns.get('list', []) ?? [];
+  list.push(t);
+  ns.set('list', list.slice(-MANUAL_MAX));
+  return { ticket: t };
 }

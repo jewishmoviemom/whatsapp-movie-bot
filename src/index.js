@@ -34,6 +34,7 @@ import { createDiscussionTools } from './core/discussion-tools.js';
 import { DriveLinks } from './core/drive-links.js';
 import { DriveLinksJob } from './core/drive-links-job.js';
 import { nextTicket } from './core/issue-tickets.js';
+import { markQuality } from './core/quality-tag.js';
 import { createProvider } from './plugins/movie-requests/library.js';
 import { chatWithTools, askOpenAiCompatible, PROVIDERS, MODEL_PREFERENCES } from './core/ai-providers.js';
 import { newsSettings } from './core/library-news.js';
@@ -275,6 +276,8 @@ async function main() {
 
   // Route every inbound message through the plugins.
   bot.on('message', (msg) => {
+    // "#request-480p <title>" goes on as "#request <title>", marked 480p (src/core/quality-tag.js).
+    try { markQuality(msg); } catch (err) { logger.warn(`quality tag: ${err.message}`); }
     try { bot.driveLinks.observe(msg); } catch (err) { logger.warn(`drive links: ${err.message}`); }
     try { bot.discussionAnswers.observe(msg); } catch (err) { logger.warn(`discussion answers: ${err.message}`); }
     try { bot.spamGuard.observe(msg); } catch (err) { logger.warn(`spam-guard: ${err.message}`); }

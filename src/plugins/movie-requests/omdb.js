@@ -519,6 +519,13 @@ const NUMBERED = /^(.*?\S)\s*[:\-–—]?\s*\b(episode|part|chapter|volume|vol\.
 // that, and one that people have rated keeps the name (see rankOf).
 const SUBTITLE_FIT = 0.95;
 
+// British spellings people type, read as the catalogue's American ones, for
+// comparing only; nothing shown to anyone is rewritten.
+const americanSpelling = (s) => String(s ?? '')
+  .replace(/\bgrey/gi, (m) => (m[0] === 'G' ? 'Gray' : 'gray'))
+  .replace(/\bcolou?r/gi, (m) => (m[0] === 'C' ? 'Color' : 'color'))
+  .replace(/\bhonou?r/gi, (m) => (m[0] === 'H' ? 'Honor' : 'honor'));
+
 /**
  * How well `title`, a catalogue title, answers `typed`: `fit`, 0..1, the best
  * of these readings, and `names`, whether one of them is the typed words
@@ -538,7 +545,11 @@ const SUBTITLE_FIT = 0.95;
  *     is at least two words long: "A New Hope" (SUBTITLE_FIT).
  */
 export function titleFit(typed, title) {
-  const full = String(title ?? '');
+  // "the grey man" (2026-10-27, SS) is "The Gray Man" in the catalogue: one
+  // letter of spelling put the Netflix film (0.875) under STRONG_FIT, so an
+  // unrated 2007 record called exactly "The Grey Man" was kept instead.
+  typed = americanSpelling(typed);
+  const full = americanSpelling(title);
   let fit = similarity(typed, full);
   let names = sameTitleWords(typed, full);
   const unnumbered = full.replace(MID_NUMBERING, ': ');
@@ -588,7 +599,7 @@ function swapNumeral(n) {
 
 /**
  * Other ways to search for what was typed, for when the first search found
- * nothing better than an obscure hit. At most two:
+ * nothing better than an obscure hit. At most three:
  *
  *   - the numbering the other way round. OMDb's search is literal, so "star
  *     wars episode 4" finds only the audiobook whose title ends "Book 4",
@@ -597,6 +608,7 @@ function swapNumeral(n) {
  *   - the obscure hit's own subtitle, when the request ends with it: the
  *     audiobook "Star Wars: A New Hope" says the film is searched for as "A
  *     New Hope", without the franchise.
+ *   - the title without a leading "the".
  */
 export function searchVariants(title, suspectTitle) {
   const out = [];
@@ -611,6 +623,11 @@ export function searchVariants(title, suspectTitle) {
   const sub = normalizeTitle(subtitle);
   const typed = normalizeTitle(title);
   if (sub.split(' ').length >= 2 && typed !== sub && typed.endsWith(` ${sub}`)) out.push(subtitle);
+  // OMDb's search wants every word typed in the title, so a leading "the" the
+  // catalogue does not have hides the film: 2026-10-26, "the avengers
+  // endgame" found only a parody short, never "Avengers: Endgame".
+  const bare = title.replace(/^\s*the\s+/i, '').trim();
+  if (bare !== title.trim() && bare.split(/\s+/).length >= 2) out.push(bare);
   return out;
 }
 
@@ -736,7 +753,10 @@ async function preferKnownFilm(title, year, suspect, pool, { apiKey, signal, max
 async function franchiseSequel(title, year, { apiKey, signal, maxCalls = 8, retry = true } = {}) {
   const n = sequelNumber(title);
   const words = normalizeTitle(cleanRequestText(title)).split(' ').filter(Boolean);
-  if (!n || n < 2 || year || !/^\d{1,2}$/.test(words[words.length - 1])) return null;
+  // A "1" counts too ("mission impossible 1", 2026-10-27: refused as a series
+  // after resolving to a making-of documentary "Part 1"): the first film is
+  // the bare-name one, which the check below already insists on.
+  if (!n || n < 1 || year || !/^\d{1,2}$/.test(words[words.length - 1])) return null;
   const name = words.slice(0, -1).join(' ');
   if (name.length < 3) return null;
   let results;
@@ -877,9 +897,18 @@ async function findSameTitled(title, apiKey, signal, { retry = true } = {}) {
  * request that omits a year, which matters on the free tier's daily quota.
  */
 export async function lookupMovie(requestText, { apiKey, signal, threshold = 0.72, detectAmbiguous = false, retry = true } = {}) {
-  const year = extractYear(requestText);
-  const title = cleanRequestText(requestText);
-  if (!title) return null;
+  let year = extractYear(requestText);
+  let title = cleanRequestText(requestText);
+  if (!title) {
+    // A title that is itself a year: "1917" was answered "not recognised"
+    // (hourly check 20261028T030001Z) because cleanRequestText takes every
+    // year-shaped number out, leaving nothing. When the whole request is
+    // years, the first is the title and a second one is its year.
+    const years = String(requestText || '').match(/\b(?:19[0-9]{2}|20[0-9]{2})\b/g) || [];
+    if (!years.length) return null;
+    title = years[0];
+    year = years.length > 1 ? Number(years[years.length - 1]) : null;
+  }
 
   // When no year was given, check whether the title alone is enough to
   // identify a film. If several share it, the requester has to say which.
@@ -1094,6 +1123,22 @@ export async function lookupNearYear(title, year, { apiKey, signal, retry = true
     }
   }
   return null;
+}
+
+/**
+ * The film OMDb files under `imdbId`, as lookupMovie returns one, or null
+ * when OMDb has no such id. For a film the library names otherwise
+ * (named-otherwise.js): the library's copy carries the id, so the request
+ * goes on as that film.
+ */
+export async function lookupById(imdbId, { apiKey, signal, retry = true } = {}) {
+  try {
+    const data = await omdbFetch({ i: imdbId, plot: 'short' }, apiKey, signal, { retry });
+    return { movie: shape(data), confidence: 1, method: 'imdb-id' };
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return null;
+    throw err;
+  }
 }
 
 /**

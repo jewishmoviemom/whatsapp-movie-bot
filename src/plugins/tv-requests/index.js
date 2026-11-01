@@ -13,7 +13,8 @@ import {
 } from './trim-queued.js';
 import { nextAsk, nextNotice, partsOf, numbersOf } from './next-part.js';
 import { tvEpisodes } from '../../core/hourly-policy.js';
-import { convertForWhatsApp, fmtBytes, conversionClock } from '../../media/ffmpeg.js';
+import { convertForWhatsApp, fmtBytes, conversionClock, lowQualityMedia, LOW_QUALITY } from '../../media/ffmpeg.js';
+import { wantedQuality, qualityFileName, qualityWords } from '../../core/quality-tag.js';
 import { segmentsReady } from '../../media/segmented.js';
 import { downloadToFile, fmtDuration } from '../../media/download.js';
 import { stageSems, STAGE_PRIORITY } from '../../media/stages.js';
@@ -264,6 +265,11 @@ function countsProse({ failed = 0, cancelled = 0, skipped = 0 }) {
 }
 
 /** Where a request's episodes are posted: the main TV posts groups, or one beta group. */
+// The copy a request makes: '480p' for a "#request-480p", else null. A 480p
+// request and a full one for the same episodes are two copies, never
+// duplicates of each other (src/core/quality-tag.js).
+const copyOf = (req) => req?.baseRow?.quality ?? null;
+
 function destinationOf(route) {
   return route?.beta ? `beta:${route.postsGroup ?? ''}` : 'main';
 }
@@ -330,6 +336,20 @@ function absentDetail(found) {
  * Episodes are queued in broadcast order and, because the queue runs one job at
  * a time, they are posted one by one in that order.
  */
+
+/**
+ * A refusal on rating where the AI check found nudity in what was refused
+ * gets 🔞; one the check never settled - not asked, unsure, failed - keeps
+ * ⛔ (the operator, 2026-10-28: "switch rated r with nudity to 🔞"). Of
+ * several seasons refused, one with nudity is enough.
+ */
+function foundNudity(screen) {
+  return !!screen?.notCleared?.some((h) => h.verdict?.nudity === true);
+}
+
+function refusedEmoji(R, refused) {
+  return refused.some((r) => r?.nudity) ? (R.nudity ?? '🔞') : (R.rated ?? '⛔');
+}
 export default {
   name: 'tv-requests',
   description: 'Watches TV request groups and posts whole seasons, one episode at a time.',
@@ -1013,7 +1033,8 @@ export default {
   _shareR(R) {
     return {
       failed: R.failed ?? '⚠️', done: R.done ?? '✅', cancelled: R.cancelled ?? '❌',
-      skipped: R.skipped ?? '⏭️', rated: R.rated ?? '⛔', notInLibrary: R.notInLibrary ?? '📬',
+      skipped: R.skipped ?? '⏭️', rated: R.rated ?? '⛔', nudity: R.nudity ?? '🔞',
+      notInLibrary: R.notInLibrary ?? '📬',
     };
   },
 
@@ -1126,7 +1147,7 @@ export default {
 
     if (queued) {
       share.refused(
-        batch.refused.length ? (R.rated ?? '⛔') : null,
+        batch.refused.length ? refusedEmoji(R, batch.refused) : null,
         batch.missing.length ? (R.notInLibrary ?? '📬') : null,
         batch.over.length || batch.full.length || batch.failed.length ? (R.failed ?? '⚠️') : null,
       );
@@ -1136,7 +1157,7 @@ export default {
     // be added, and ✅ when every season asked for passed.
     if (tested) {
       await react(batch.over.length || batch.full.length || batch.failed.length ? (R.failed ?? '⚠️')
-        : batch.refused.length ? (R.rated ?? '⛔')
+        : batch.refused.length ? refusedEmoji(R, batch.refused)
           : batch.missing.length ? (R.notInLibrary ?? '📬')
             : (R.done ?? '✅'));
     }
@@ -1398,6 +1419,8 @@ export default {
     // beside it; otherwise what they typed, as always.
     const rowText = batch?.request ?? text;
     const rowId = () => batch?.rowId ?? msg.id ?? `tv-${Date.now()}`;
+    // "#request-480p": smaller copies, where the feature is on (quality-tag.js).
+    const quality = wantedQuality(ctx.config, msg);
     const typed = batch ? { typed: batch.typed } : {};
     // A request from a beta group is a test: checked like any other, and never
     // queued (beta.js). What is waiting is read from the REAL queue for it,
@@ -1479,7 +1502,7 @@ export default {
     // episodes this request would really queue: an episode an earlier
     // request holds in the queue was checked for that request, and is not
     // asked about, or queued, again.
-    const waiting = this._waitingEpisodeIds(ctx, waitingFor);
+    const waiting = this._waitingEpisodeIds(ctx, waitingFor, quality);
     // The rating-blocked episodes (override-check.js): those the bypass list
     // covers are sent with no AI check, and the rest are put to the AI check
     // where it could clear them, and sent on a sure "no nudity" - the
@@ -1515,10 +1538,11 @@ export default {
       // reason: said once, and recorded for each.
       const quiet = !!batch?.said.has('series-rated');
       batch?.said.add('series-rated');
-      batch?.refused.push({ season: found.season, rated: rating });
+      const nudity = foundNudity(screen);
+      batch?.refused.push({ season: found.season, rated: rating, nudity });
       await this._refuseOnRating(ctx, {
         msg, text: rowText, found, route, react, say, quiet, rowId: rowId(), typed: batch?.typed,
-        rated: rating,
+        rated: rating, nudity,
         detail: `rated ${rating}${withheldSuffix(screened?.detail)}`,
         override: screened?.detail ?? null,
         line: `⛔ ${show} — rated ${rating}, can't be posted`,
@@ -1560,11 +1584,12 @@ export default {
       const what = one ? `${found.series.name} ${code}` : `${found.series.name} ${scope}`;
       const rated = withheld.ratings.join(' and ');
       const which = withheld.clauses.replace(/^E/, 'e');
-      batch?.refused.push({ season: found.season, rated });
+      const nudity = foundNudity(screen);
+      batch?.refused.push({ season: found.season, rated, nudity });
       // What the AI check made of them goes on the row, not to the group:
       // they are refused on their rating, in the words they always had.
       await this._refuseOnRating(ctx, {
-        msg, text: rowText, found, route, react, say, withheld, rated, rowId: rowId(), typed: batch?.typed,
+        msg, text: rowText, found, route, react, say, withheld, rated, nudity, rowId: rowId(), typed: batch?.typed,
         detail: (one ? `${code} rated ${rated}` : `${scope} — all ${withheld.detail}`)
           + withheldSuffix(screened?.detail),
         override: screened?.detail ?? null,
@@ -1592,7 +1617,7 @@ export default {
     // cancelled or failed while the checks ran is queued here, not called
     // "already waiting" with nobody left to post it. From here to the adds
     // below nothing may await (test/tv-duplicate-request.test.mjs, "at once").
-    const waitingNow = this._waitingEpisodeIds(ctx, waitingFor);
+    const waitingNow = this._waitingEpisodeIds(ctx, waitingFor, quality);
     for (const { ep } of screen?.waiting ?? []) waitingNow.add(String(ep.id));
     const fresh = allowed.filter((e) => !waitingNow.has(String(e.id)));
     const alreadyWaiting = allowed.length - fresh.length;
@@ -1619,7 +1644,7 @@ export default {
     // its posted episodes go, and they would be queued - and posted - again
     // as a new request of theirs (found in review, 2026-10-11). Not a test,
     // whose holder is always a real request it is tried against.
-    const mine = !testing && allowed.length && !unreached ? this._ownHolderOf(ctx, allowed, route, msg, waitingNow) : null;
+    const mine = !testing && allowed.length && !unreached ? this._ownHolderOf(ctx, allowed, route, msg, waitingNow, quality) : null;
     if (mine) {
       return this._resentTv(ctx, {
         msg, route, react, batch, holder: mine.holder, own: mine.own, which, found, typed, withheld, screened,
@@ -1642,7 +1667,7 @@ export default {
       // is over once it is answered, and a real request's outcome and place
       // in line are not the test's to show.
       if (!testing) {
-        const holder = this._holderOf(ctx, allowed, route);
+        const holder = this._holderOf(ctx, allowed, route, quality);
         this._addTvFollowers(ctx, holder, [{
           msgId: msg.id, msgKey: batch ? null : (msg.key ?? null), chatJid: msg.chatJid, historyId: dupId, route: route ?? null,
         }]);
@@ -1837,6 +1862,7 @@ export default {
       // much as for an admin: a season sent in parts is not missing episodes,
       // nor its next part a member asking again (incident-scan.js).
       ...(cutOff ? { cut: cutOff.cut } : {}),
+      ...(quality ? { quality } : {}),
     };
     const absent = absentDetail(found);
     if (absent) Object.assign(baseRow, { absent, detail: baseRow.detail + withheldSuffix(absent) });
@@ -1944,6 +1970,7 @@ export default {
             memberKey,
             position: `${i + 1}/${queueing.length}`,
             ...(route ? { beta: true } : {}),
+            ...(quality ? { quality } : {}),
           },
           run: (job) => this.deliverEpisode({
             ep, ctx, job, msg, react, notifier, reqKey, route,
@@ -2595,13 +2622,13 @@ export default {
    * The journalled request that holds most of `episodes` for `route`'s
    * destination - the one a duplicate follows - or null.
    */
-  _holderOf(ctx, episodes, route) {
+  _holderOf(ctx, episodes, route, quality = null) {
     const want = destinationOf(route);
     const ids = new Set(episodes.map((e) => String(e.id)));
     let best = null;
     let most = 0;
     for (const req of ctx.store.get('pending', []) ?? []) {
-      if (destinationOf(req.route) !== want) continue;
+      if (destinationOf(req.route) !== want || copyOf(req) !== (quality ?? null)) continue;
       const n = (req.episodes ?? []).filter((e) => ids.has(String(e.id))).length;
       if (n > most) { best = req; most = n; }
     }
@@ -2764,7 +2791,9 @@ export default {
     const n = queueing.length;
     const words = single ? `*${plainText(what)}*`
       : `${n} episode${n === 1 ? '' : 's'} of *${plainText(found.series.name)}* ${scope}`;
-    const pass = { what: `${what}${also}`, words: `${words}${also}`, notes: told.notes };
+    // "#request-480p": said, so the tester sees the small copy was understood.
+    const small = wantedQuality(ctx.config, msg) ? ` ${qualityWords(ctx.config.media)} each` : '';
+    const pass = { what: `${what}${small}${also}`, words: `${words}${small}${also}`, notes: told.notes };
     if (cutOff && batch) batch.cut.push({ season: found.season, ...cutOff });
     else if (cutOff) pass.cut = cutReply(cutOff.cut, { lead: `*${plainText(found.series.name)}* ${scope}`, ask: cutOff.ask });
     this._history(ctx, {
@@ -2831,7 +2860,7 @@ export default {
    * for one season of several (_runSeason); `text` is then that season.
    */
   async _refuseOnRating(ctx, {
-    msg, text, found, route, react, say = false, rated, detail, line, reply, withheld = null,
+    msg, text, found, route, react, say = false, rated, nudity = false, detail, line, reply, withheld = null,
     status = 'blocked-rating', override = null, quiet = false, rowId = null, typed = null,
   }) {
     this._history(ctx, {
@@ -2870,7 +2899,7 @@ export default {
       catch (err) { ctx.log.warn(`could not reply: ${err.message}`); }
     }
     if (say && !quiet) this._notify(ctx, line, msg, { route, step: 'blocked' });
-    await react(this._react(ctx).rated);
+    await react(refusedEmoji(this._react(ctx), [{ nudity }]));
   },
 
   /**
@@ -3494,12 +3523,12 @@ export default {
    * 2026-10-11). An episode asked for alone once it is posted is not in
    * progress for him any more, and is queued as asked.
    */
-  _ownHolderOf(ctx, episodes, route, msg, coming) {
+  _ownHolderOf(ctx, episodes, route, msg, coming, quality = null) {
     if (!episodes?.length || !msg) return null;
     const want = destinationOf(route);
     const ids = episodes.map((e) => String(e.id));
     for (const req of ctx.store.get('pending', []) ?? []) {
-      if (destinationOf(req.route) !== want) continue;
+      if (destinationOf(req.route) !== want || copyOf(req) !== (quality ?? null)) continue;
       const own = this._ownTvRequest(ctx, req, msg);
       if (!own) continue;
       const left = new Set((req.episodes ?? []).map((e) => String(e.id)).filter((id) => coming.has(id)));
@@ -3657,6 +3686,7 @@ export default {
                 ...(req.memberKey ? { memberKey: req.memberKey } : {}),
                 ...resumed, position: `${i + 1}/${episodes.length}`,
                 ...(req.route?.beta ? { beta: true } : {}),
+                ...(copyOf(req) ? { quality: copyOf(req) } : {}),
               },
               // The route journalled with the request, never one re-derived from
               // today's config - see recoverPending.
@@ -3810,7 +3840,7 @@ export default {
     // Mentalist S03E05" twice, and a restart would have posted each of those
     // episodes that many times. Same Jellyfin item, same destination.
     const taken = new Map();                     // destination + episode -> the request resuming it
-    const keyOf = (r, e) => `${destinationOf(r.route)}\u0000${String(e.id)}`;
+    const keyOf = (r, e) => `${destinationOf(r.route)}\u0000${copyOf(r) ?? ''}\u0000${String(e.id)}`;
     for (const r of all) if (!leftover.has(r.reqKey)) for (const e of r.episodes ?? []) taken.set(keyOf(r, e), r);
     const unique = [];
     for (const r of pending) {
@@ -4078,6 +4108,7 @@ export default {
           ...(req.memberKey ? { memberKey: req.memberKey } : {}),
           retry: attempt, retryKey: key, position: `${args.index + 1}/${args.total}`,
           ...(route?.beta ? { beta: true } : {}),
+          ...(copyOf(req) ? { quality: copyOf(req) } : {}),
         },
         // Its ✅ comes from the request's notifier, not its place in the
         // season (see deliverEpisode): it may land first or last.
@@ -4177,17 +4208,18 @@ export default {
    * holds jobs, one per episode, whatever request they are grouped into, so
    * an episode is matched on its own series, season and number.
    */
-  _waitingEpisodeIds(ctx, route) {
+  _waitingEpisodeIds(ctx, route, quality = null) {
     const want = destinationOf(route);
     const epKey = (e) => `${String(e.series ?? '').toLowerCase()}|${e.season}|${e.episode}`;
     const inQueue = new Set();
     for (const e of [...(ctx.queue.pending ?? []), ...(ctx.queue.active?.values?.() ?? [])]) {
       if (e?.kind !== 'tv' || !e.meta || !!e.meta.beta !== !!route?.beta) continue;
+      if ((e.meta.quality ?? null) !== (quality ?? null)) continue;
       inQueue.add(epKey(e.meta));
     }
     const ids = new Set();
     for (const req of ctx.store.get('pending', []) ?? []) {
-      if (destinationOf(req.route) !== want) continue;
+      if (destinationOf(req.route) !== want || copyOf(req) !== (quality ?? null)) continue;
       const resuming = !!this._awaitingRecovery?.has(req.reqKey);
       const held = this._live?.get(req.reqKey);
       for (const ep of req.episodes ?? []) {
@@ -4220,11 +4252,14 @@ export default {
 
   async deliverEpisode({ ep, ctx, job, msg, react, isLast, index, total, notifier = null, route = null, reqKey = null }) {
     const cfg = ctx.config.tvRequests;
-    const media = ctx.config.media;
+    // A "#request-480p" is encoded small (ffmpeg.js lowQualityMedia): read
+    // from its journalled row, so a resume or a retry makes the same copy.
+    const quality = copyOf((ctx.store.get('pending', []) ?? []).find((r) => r.reqKey === reqKey));
+    const media = quality === LOW_QUALITY ? lowQualityMedia(ctx.config.media) : ctx.config.media;
     const R = this._react(ctx);
     const jf = ctx.config.library?.jellyfin ?? {};
     const label = episodeLabel(ep);
-    const outName = episodeFileName(ep);
+    const outName = qualityFileName(episodeFileName(ep), quality);
 
     const workDir = media.workDir;
     fs.mkdirSync(workDir, { recursive: true });

@@ -7,6 +7,16 @@
 <title>WhatsApp Bot Control</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
 <link rel="stylesheet" href="/style.css">
+<script>
+  /* Apply the saved theme before the first paint, so a light-mode user does not
+     see a dark flash on every load. app.js re-applies this and owns the Settings
+     control; this is only the head start. "auto" leaves no attribute, so the
+     prefers-color-scheme rules in style.css decide. */
+  try {
+    var t = localStorage.getItem('botpanel.theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch (e) { /* private mode: fall back to auto */ }
+</script>
 </head>
 <body>
 
@@ -612,6 +622,7 @@
         <h3>Reactions — blocked / dead ends</h3>
         <div class="emoji-grid">
           <label>Rating blocked<input id="r-rated" class="emoji"></label>
+          <label>Rated, nudity found<input id="r-nudity" class="emoji"></label>
           <label>Still in theaters<input id="r-theaters" class="emoji"></label>
           <label>Not found<input id="r-notfound" class="emoji"></label>
           <label>Not written properly<input id="r-writtenwrong" class="emoji"></label>
@@ -1005,6 +1016,15 @@
           <select id="f-loglevel"><option>debug</option><option>info</option><option>warn</option><option>error</option></select>
         </label>
 
+        <h3>Appearance — dark mode</h3>
+        <label>Theme <span class="hint">light, dark, or auto (match your device). Applies at once; saved in this browser only, not on the server.</span>
+          <select id="f-theme">
+            <option value="auto">Auto — match my device</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+
       </div>
 <div class="card">
         <h2>Email alerts</h2>
@@ -1188,7 +1208,17 @@
     <section class="panel" id="tab-tickets">
       <div class="card">
         <h2>Tickets</h2>
-        <p class="hint">Every ticket that has been opened: a member's <strong>#issue</strong> in the discussions group, and the ones the Ollama agent opened for the admins. Numbered in the order they came. A ticket is open until you resolve it; leave a note saying what was done.</p>
+        <p class="hint">Every ticket that has been opened: a member's <strong>#issue</strong> in the discussions group, the ones the Ollama agent opened for the admins, and the ones added here by hand. Numbered in the order they came. A ticket is open until you resolve it; leave a note saying what was done.</p>
+        <details id="tix-new" style="margin-bottom:10px">
+          <summary><strong>➕ New ticket</strong> <span class="hint">— a problem that never came as an #issue: told to you privately, or seen yourself. The hourly check researches it like an #issue.</span></summary>
+          <div class="row gap wrap" style="margin-top:8px">
+            <input id="tix-new-who" type="text" maxlength="80" placeholder="member's name (optional)" style="flex:1;min-width:160px">
+            <input id="tix-new-number" type="text" maxlength="20" inputmode="tel" placeholder="their number (optional)" style="flex:1;min-width:140px">
+            <input id="tix-new-group" type="text" maxlength="120" placeholder="group (optional)" style="flex:1;min-width:140px">
+          </div>
+          <textarea id="tix-new-text" maxlength="2000" rows="3" placeholder="What is the problem? The film or episode, and the exact error if there is one." style="width:100%;margin-top:8px"></textarea>
+          <div class="row gap" style="margin-top:6px"><button class="btn small primary" id="btn-tix-add">Add ticket</button></div>
+        </details>
         <div class="row gap wrap" style="margin-bottom:10px">
           <div class="seg" id="tix-filter">
             <button class="seg-btn active" data-tix="open">Open <span id="tix-count-open" class="badge">0</span></button>

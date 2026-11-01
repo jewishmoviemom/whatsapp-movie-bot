@@ -19,6 +19,7 @@ export const LEGEND = `🔍 Researching · 🎬 Added to the queue
 
 If we can't do it:
 ⛔ Rated R / NC-17 / X / TV-MA — not allowed
+🔞 Rated, and it has nudity — not allowed
 🎪 Only in theaters — not on the server yet
 📬 Not in the library — tell us here: ${FORM_MISSING}
 ❓ Not a movie we could find — check the spelling. An unofficial film? Request it in group 07
@@ -49,6 +50,7 @@ export const TV_LEGEND = `🔍 Researching · 🎬 Added to the queue · 🤥 Al
 
 If we can't do it:
 ⛔ Rated TV-MA / R / NC-17 / X — not allowed (in a season, only those episodes are left out)
+🔞 Rated, and it has nudity — not allowed
 📺 Which season? — say the season, e.g. *#request The Office S01*
 📬 Not in the library, or the name didn't match — check the spelling. Admin will review and advise on discussions group (link below)
 ✍️ Not written properly — write the season and episode like *#request The Office S01E05* (a zero, not the letter O)

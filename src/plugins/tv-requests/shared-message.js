@@ -62,7 +62,7 @@ export function shareMessage({ send, R, onHandover = () => false, onEnded = () =
     if (all.includes(R.failed)) return R.failed;
     // A season's null ending is an admin's cancel (the notifier's ending()).
     if (all.some((e) => e == null || e === R.cancelled)) return R.cancelled;
-    for (const e of [R.rated, R.notInLibrary]) if (e && all.includes(e)) return e;
+    for (const e of [R.nudity, R.rated, R.notInLibrary]) if (e && all.includes(e)) return e;
     // A season set aside whole (⏭️) was not refused or cancelled either: an
     // admin skipped it, and the seasons that were sent still end on ✅.
     const skip = (e) => !!R.skipped && e === R.skipped;

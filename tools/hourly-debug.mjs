@@ -1134,7 +1134,7 @@ export async function shipFix(s, request, ctx, {
 // What the session may ask the bot, through the check. Nothing that sends to
 // WhatsApp: the bot's command file takes ops that post to groups, which is
 // why the session cannot write it itself.
-const SESSION_OPS = new Set(['health', 'queue-status', 'requeue', 'repost']);
+const SESSION_OPS = new Set(['health', 'queue-status', 'requeue', 'repost', 'resolve-ticket']);
 const MAX_REQUEUES = 5;
 // A re-post sends again a file that was sent: only in a run whose findings
 // quote WhatsApp's "unusual format" refusal (incident-scan.js UNOPENABLE),
@@ -1161,6 +1161,7 @@ export const REQUEUE_WAIT_MS = 60_000 + OMDB_RETRY_SPAN_MS;
 export async function botRequest(s, request, ctx, { ask = botCommand } = {}) {
   const op = String(request?.op ?? '');
   if (!SESSION_OPS.has(op)) return { ok: false, error: `"${op}" is not one the session may send - only ${[...SESSION_OPS].join(', ')}` };
+  if (op === 'resolve-ticket') return resolveTicket(s, request, ctx, ask);
   if (op !== 'requeue' && op !== 'repost') return (await ask(s.dataDir, { op }, { timeoutMs: 30_000 })) ?? { ok: false, error: 'the bot did not answer' };
   if (op === 'repost') return repost(s, request, ctx, ask);
   const plugin = request.plugin === 'tv' ? 'tv' : request.plugin === 'movie' ? 'movie' : null;
@@ -1174,6 +1175,25 @@ export async function botRequest(s, request, ctx, { ask = botCommand } = {}) {
   // Unanswered is not the same as not done: the bot may still be on it, and
   // it refuses a second re-run of a request it has queued.
   return answer ?? { ok: false, error: `the bot did not answer within ${Math.round(REQUEUE_WAIT_MS / 60_000)} minutes - it may still be re-running it; History shows how it ended` };
+}
+
+/**
+ * A ticket an admin added by hand, resolved by the session that researched it
+ * and found it done or explained (the operator, 2026-10-30: "make me an option
+ * to manually add tickets and of course you'll reconcile them accordingly").
+ * Only one this run's findings name, and only resolved - never reopened -
+ * with the note saying what was found; it sends nothing to WhatsApp.
+ */
+async function resolveTicket(s, request, ctx, ask) {
+  const n = Number(request?.n);
+  if (!Number.isInteger(n) || !ctx.manualTickets?.has(n)) {
+    return { ok: false, error: `ticket ${request?.n ?? '(none)'} is not a hand-added ticket this run's findings name` };
+  }
+  const note = String(request?.note ?? '').trim();
+  if (!note) return { ok: false, error: 'resolve-ticket needs a "note" saying what was found and done' };
+  ctx.manualTickets.delete(n);
+  return (await ask(s.dataDir, { op: 'ticket-status', n, status: 'resolved', note: note.slice(0, 500), by: `hourly check ${ctx.runId}` }, { timeoutMs: 30_000 }))
+    ?? { ok: false, error: 'the bot did not answer' };
 }
 
 /**
@@ -1621,6 +1641,9 @@ export async function hourlyRun(s, {
       // re-posts as that (repost, above).
       unopenable: [...result.incidents, ...result.notices].filter((f) => f.unopenable).length,
       reposted: 0,
+      // The hand-added tickets the session may resolve (resolveTicket, above).
+      manualTickets: new Set([...result.incidents, ...result.notices]
+        .filter((f) => f.report?.source === 'manual' && f.report?.ticket != null).map((f) => Number(f.report.ticket))),
     };
     let outside = { files: [], live: [] };
     if (ready.claude === 'ready') {

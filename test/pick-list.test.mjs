@@ -2140,8 +2140,9 @@ console.log('=== an R-rated series the AI may clear is listed, and the film pick
   await send(h, '2', TESTING);
   let after = since(h.out, mark);
   ok(aiAsks.length === 1 && /Chapter 2/.test(aiAsks[0]), 'picking 2 asks the AI about that one film');
-  ok(after.some((e) => e.op === 'react' && e.on === req.id && e.emoji === '⛔') && sentCount(h) === 0,
-    'it does not clear it: ⛔ on the request, and nothing passes');
+  // 🔞, not ⛔: the check found nudity (the operator, 2026-10-28).
+  ok(after.some((e) => e.op === 'react' && e.on === req.id && e.emoji === '🔞') && sentCount(h) === 0,
+    'it does not clear it: 🔞 on the request, and nothing passes');
   const r = row(h.store, req.id);
   ok(r?.pickList?.refusals?.[0]?.status === 'blocked-rating' && /AI check did not clear it/.test(r.pickList.refusals[0].detail ?? ''),
     `History records the refusal with the AI's reason: "${r?.pickList?.refusals?.[0]?.detail}"`);

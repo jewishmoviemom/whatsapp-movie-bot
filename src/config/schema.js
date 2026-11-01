@@ -196,6 +196,10 @@ export const DEFAULT_CONFIG = {
     reactions: {
       // --- blocks / dead ends (terminal) ---
       rated: '⛔',              // blocked: rating not allowed
+      // Blocked on its rating, and the AI check found nudity in it: 🔞, so a
+      // member can tell it from a rating refusal the check never settled (the
+      // operator, 2026-10-28: "switch rated r with nudity to 🔞").
+      nudity: '🔞',
       theaters: '🎪',           // missing, because it is still in cinemas
       notFound: '❓',           // no metadata match
       needYear: '📅',           // several films share this title - which year?
@@ -479,6 +483,9 @@ export const DEFAULT_CONFIG = {
       'tv-rating-notice': 'on',
       'movie-duplicate-notice': 'on',
       'tv-duplicate-notice': 'on',
+      // "#request-480p" (2026-10-26): On for a new install; an install saved
+      // before this names no mode for it, so keepSavedChoices keeps it Off there.
+      'request-480p': 'on',
     },
   },
 
@@ -719,6 +726,12 @@ export const DEFAULT_CONFIG = {
     audioCodec: 'aac',
     audioBitrateK: 128,
     maxHeight: 720,             // downscale ceiling when re-encoding ('custom' only)
+    // "#request-480p": a member asks for a smaller copy (the operator,
+    // 2026-10-26: "request movies in lower quality so the file size is in
+    // megabytes"). Always encoded, at most this tall, at this video bitrate,
+    // and never over maxMB: a two-hour film comes to about 800 MB, a
+    // half-hour episode about 200 MB. ffmpeg.js lowQualityMedia.
+    lowQuality: { maxHeight: 480, videoKbps: 800, audioKbps: 96, maxMB: 950, preset: 'superfast' },
     ffmpegPath: 'ffmpeg',
     ffprobePath: 'ffprobe',
     // Delete a job's files the moment it is sent; off, a sent film stays in

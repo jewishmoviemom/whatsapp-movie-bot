@@ -148,7 +148,10 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'beta-test-mode-'));
 const WORK = path.join(TMP, 'work');
 fs.mkdirSync(WORK);
 
-const MODES_BEFORE = { 'tv-rating-notice': 'off', 'movie-duplicate-notice': 'off', 'tv-duplicate-notice': 'off' };
+const MODES_BEFORE = { 'tv-rating-notice': 'off', 'movie-duplicate-notice': 'off', 'tv-duplicate-notice': 'off',
+  // 480p (beta006) came after these cases were written, On by default on a
+  // new install; Off here so the running-tests lines stay those they pin.
+  'request-480p': 'off' };
 
 function config({ features = { 'tv-rating-notice': 'beta', 'movie-duplicate-notice': 'beta' }, enforce = false } = {}) {
   const c = mergeDefaults({

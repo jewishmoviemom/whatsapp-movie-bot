@@ -274,6 +274,8 @@ export function messageFor(row, { indexed = null, prefix = '' } = {}) {
     timestamp: Number(row.requestedAt) || Number(indexed?.t) || null,
     messageType: indexed?.y ?? 'conversation',
     text: `${prefix ? `${prefix} ` : ''}${typed}`.trim(),
+    // A "#request-480p" re-run is a 480p one too (quality-tag.js).
+    ...(row.quality ? { quality: row.quality } : {}),
   };
 }
 

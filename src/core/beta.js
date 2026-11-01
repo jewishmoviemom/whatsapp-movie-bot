@@ -170,6 +170,25 @@ export const FEATURES = [
       + 'waiting)". Off: the "— N episode(s) — added to the queue" line the whole request would have got, as before.',
     scope: 'tv',
   },
+  {
+    // src/core/quality-tag.js, and lowQualityMedia in src/media/ffmpeg.js. The
+    // operator, 2026-10-26: "Add option for users to request movies in lower
+    // quality so the file size is in megabytes". A new command and new words
+    // in the groups, so it goes through the beta group first. Off or Beta, a
+    // "#request-480p" in a main group is taken as a plain #request.
+    key: 'request-480p',
+    code: 'beta006',
+    label: 'Smaller copies: #request-480p',
+    howTo: 'Ask for a film or a season with #request-480p instead of #request, for example "#request-480p Inception '
+      + '2010" or "#request-480p The Office S01". The ✅ Test passed answer says it would be sent in 480p, a smaller '
+      + 'file of a few hundred MB. The same request with plain #request still says the full file.',
+    example: '#request-480p Inception 2010',
+    description: '"#request-480p <title>" (films and TV) is encoded at 480p, about 800 kbps, and never over 950 MB '
+      + '(Settings: media.lowQuality): a two-hour film comes to about 800 MB, a half-hour episode about 200 MB. The '
+      + 'file is named "… 480p.mp4". A 480p request and a full one for the same film are not duplicates of each '
+      + 'other. Off: "#request-480p" is taken as a plain #request.',
+    scope: 'all',
+  },
 ];
 
 export const MODES = ['off', 'beta', 'on'];
@@ -747,7 +766,8 @@ export function testersGuide(config, { code = null, registry = FEATURES } = {}) 
     return c?.requirePrefix ? String(c.prefix ?? '').trim() : '';
   };
   const tryLine = (f) => (f.example
-    ? `Try: $${f.code} ${[prefixOf(f), f.example].filter(Boolean).join(' ')}`
+    // An example that is its own command ("#request-480p ...") takes no prefix.
+    ? `Try: $${f.code} ${[f.example.startsWith('#') ? '' : prefixOf(f), f.example].filter(Boolean).join(' ')}`
     : `Start with: $${f.code}`);
   const all = (registry ?? []).filter((f) => f?.key);
   let feats;

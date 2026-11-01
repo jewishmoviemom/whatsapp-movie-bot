@@ -71,7 +71,7 @@ const REG = [
   { key: 'season-picker', label: 'Season picker', description: 'Buttons for seasons', scope: 'tv' },
 ];
 
-const MODES_BEFORE = { 'tv-rating-notice': 'off', 'movie-duplicate-notice': 'off', 'tv-duplicate-notice': 'off' };
+const MODES_BEFORE = { 'tv-rating-notice': 'off', 'movie-duplicate-notice': 'off', 'tv-duplicate-notice': 'off', 'request-480p': 'off' };
 
 function config(beta = {}, extra = {}) {
   return mergeDefaults({
@@ -104,7 +104,7 @@ console.log('=== the schema: no beta groups, and the operator\'s three features 
   // set these in the repo coding as default"): the three in the registry On,
   // everywhere, which needs no beta group - and still no beta group.
   ok(JSON.stringify(DEFAULT_CONFIG.beta) === JSON.stringify({ groups: [], postsGroup: '',
-    features: { 'tv-rating-notice': 'on', 'movie-duplicate-notice': 'on', 'tv-duplicate-notice': 'on' } }),
+    features: { 'tv-rating-notice': 'on', 'movie-duplicate-notice': 'on', 'tv-duplicate-notice': 'on', 'request-480p': 'on' } }),
   'defaults are no beta groups, no beta posts group, and the three features On');
   const merged = mergeDefaults({}, DEFAULT_CONFIG);
   ok(Array.isArray(merged.beta.groups) && merged.beta.groups.length === 0, 'an old config.json upgrades to an empty beta section');
@@ -119,8 +119,8 @@ console.log('=== the schema: no beta groups, and the operator\'s three features 
   // (2026-09-29), so they are always on. Nor is the "which one?" list
   // (beta001): it left beta for every group on 2026-10-11, after a config
   // with no modes in it had it Off (see test/pick-list.test.mjs).
-  ok(FEATURES.map((f) => `${f.key}:${f.scope}`).join() === 'tv-rating-notice:tv,movie-duplicate-notice:movie,tv-duplicate-notice:tv',
-    'the registry holds only new features: the duplicate notice for movies, the rating notice and the duplicate notice for TV');
+  ok(FEATURES.map((f) => `${f.key}:${f.scope}`).join() === 'tv-rating-notice:tv,movie-duplicate-notice:movie,tv-duplicate-notice:tv,request-480p:all',
+    'the registry holds only new features: the duplicate notice for movies, the rating notice and the duplicate notice for TV, and #request-480p (2026-10-26)');
   ok(!FEATURES.some((f) => f.key === 'tv-queue-positions'), 'TV place in line is not a beta feature');
   ok(!FEATURES.some((f) => f.key === 'movie-pick-list'), 'nor is the "which one?" list: every group has it, whatever the config says');
   ok(FEATURES.every((f) => featureMode(mergeDefaults({}, DEFAULT_CONFIG), f.key) === 'on'),
@@ -777,7 +777,7 @@ console.log('=== GET /api/beta ===');
 {
   const r = await call('GET', '/api/beta');
   ok(r.status === 200, 'answers');
-  ok(Array.isArray(r.json.features) && r.json.features.map((f) => `${f.key}:${f.mode}`).join() === 'tv-rating-notice:off,movie-duplicate-notice:off,tv-duplicate-notice:off',
+  ok(Array.isArray(r.json.features) && r.json.features.map((f) => `${f.key}:${f.mode}`).join() === 'tv-rating-notice:off,movie-duplicate-notice:off,tv-duplicate-notice:off,request-480p:off',
     'with the real registry, every feature Off - and no "which one?" list on Settings → Beta to switch Off again');
   ok(r.json.pickList?.shown === 0, 'and the pick-list counters, empty');
   ok(r.json.modes.join() === 'off,beta,on', 'the three modes');

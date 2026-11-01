@@ -2,6 +2,37 @@
    to maintain on the server, and it stays fast on a small box. */
 
 const $ = (id) => document.getElementById(id);
+
+/* ----------------------------- theme ------------------------------- */
+/* Light / Dark / Auto for the panel. A per-browser display choice, so it is
+   kept in localStorage like the other botpanel.* prefs rather than in the bot's
+   config — nothing here is sent to the server. "auto" removes the attribute and
+   lets the prefers-color-scheme rules in style.css follow the device; "light"
+   and "dark" set data-theme on <html> and override them. The inline script in
+   the page head applies the saved value before the first paint, to avoid a
+   flash; this re-asserts it and owns the Settings control. */
+const THEME_KEY = 'botpanel.theme';
+function savedTheme() {
+  try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch { return 'auto'; }
+}
+function applyTheme(mode) {
+  const m = mode === 'light' || mode === 'dark' ? mode : 'auto';
+  if (m === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = m;
+  return m;
+}
+applyTheme(savedTheme());
+{
+  const sel = $('f-theme');
+  if (sel) {
+    sel.value = savedTheme();
+    sel.addEventListener('change', (e) => {
+      const m = applyTheme(e.target.value);
+      try { localStorage.setItem(THEME_KEY, m); } catch { /* private mode */ }
+    });
+  }
+}
+
 const api = async (method, url, body) => {
   const res = await fetch(`/api${url}`, {
     method,
@@ -343,6 +374,7 @@ function fillForm(c) {
   $('r-posoverflow').value = r.positionOverflow ?? '';
   $('r-skipped').value = r.skipped ?? '';
   $('r-rated').value = r.rated ?? '';
+  $('r-nudity').value = r.nudity ?? '';
   $('r-theaters').value = r.theaters ?? '';
   $('r-notfound').value = r.notFound ?? '';
   $('r-writtenwrong').value = r.writtenWrong ?? '';
@@ -468,7 +500,7 @@ function collectForm() {
         sending: $('r-sending').value, done: $('r-done').value,
         positions: $('r-positions').value.split(',').map((x) => x.trim()).filter(Boolean),
         positionOverflow: $('r-posoverflow').value,
-        rated: $('r-rated').value, theaters: $('r-theaters').value,
+        rated: $('r-rated').value, nudity: $('r-nudity').value, theaters: $('r-theaters').value,
         notFound: $('r-notfound').value, notInLibrary: $('r-notinlibrary').value,
         writtenWrong: $('r-writtenwrong').value,
         needYear: $('r-needyear').value, duplicate: $('r-duplicate').value,
@@ -589,7 +621,8 @@ const FORM_FIELDS = {
   'r-downloading': 'movieRequests.reactions.downloading', 'r-converting': 'movieRequests.reactions.converting',
   'r-sending': 'movieRequests.reactions.sending', 'r-done': 'movieRequests.reactions.done',
   'r-positions': 'movieRequests.reactions.positions', 'r-posoverflow': 'movieRequests.reactions.positionOverflow',
-  'r-rated': 'movieRequests.reactions.rated', 'r-theaters': 'movieRequests.reactions.theaters',
+  'r-rated': 'movieRequests.reactions.rated', 'r-nudity': 'movieRequests.reactions.nudity',
+  'r-theaters': 'movieRequests.reactions.theaters',
   'r-notfound': 'movieRequests.reactions.notFound', 'r-notinlibrary': 'movieRequests.reactions.notInLibrary',
   'r-writtenwrong': 'movieRequests.reactions.writtenWrong',
   'r-needyear': 'movieRequests.reactions.needYear', 'r-duplicate': 'movieRequests.reactions.duplicate',
@@ -1779,7 +1812,7 @@ function renderTickets() {
     return;
   }
   $('tix-list').innerHTML = rows.map((t) => {
-    const src = t.source === 'agent' ? '🤖 Agent' : (t.keeper ? '⭐ Keeper #issue' : '🚩 Member #issue');
+    const src = t.source === 'agent' ? '🤖 Agent' : t.source === 'manual' ? `✍️ Added by hand${t.addedBy ? ` by ${t.addedBy}` : ''}` : (t.keeper ? '⭐ Keeper #issue' : '🚩 Member #issue');
     const resolved = t.status === 'resolved';
     return `<div class="list-item">
       <div><strong>#${String(t.n).padStart(4, "0")}</strong> · ${esc(src)} · ${esc(fmtDateTime(t.at))} · ${esc(t.who ?? '')}${t.group ? ` · ${esc(t.group)}` : ''}
@@ -1813,6 +1846,23 @@ $('tix-filter').addEventListener('click', (e) => {
   renderTickets();
 });
 $('btn-tix-refresh').addEventListener('click', loadTickets);
+$('btn-tix-add').addEventListener('click', async () => {
+  const text = $('tix-new-text').value.trim();
+  if (!text) { toast('Say what the problem is'); return; }
+  try {
+    const r = await api('POST', '/tickets', {
+      text, who: $('tix-new-who').value, number: $('tix-new-number').value, group: $('tix-new-group').value,
+    });
+    toast(`Ticket #${String(r.ticket.n).padStart(4, "0")} added`);
+    ['tix-new-text', 'tix-new-who', 'tix-new-number', 'tix-new-group'].forEach((id) => { $(id).value = ''; });
+    $('tix-new').open = false;
+    TIX_FILTER = 'open';
+    document.querySelectorAll('#tix-filter .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.tix === 'open'));
+    loadTickets();
+  } catch (err) {
+    if (!err.handled) toast(err.message);
+  }
+});
 document.querySelector('.tab[data-tab="tickets"]').addEventListener('click', loadTickets);
 setInterval(loadTickets, 60000);
 loadTickets();

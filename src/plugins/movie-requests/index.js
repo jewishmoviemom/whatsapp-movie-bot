@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { lookupMovie, isTooBroad, listPlots, OMDB_RETRY_SPAN_MS } from './omdb.js';
+import { lookupMovie, lookupById, obscureReason, isTooBroad, listPlots, OMDB_RETRY_SPAN_MS } from './omdb.js';
 import { isTheatricalOnly, isBlockedRating } from './theatrical.js';
-import { findInLibrary, researchLibrary, tvItemRefusal, closestNote } from './library.js';
+import { findInLibrary, researchLibrary, tvItemRefusal, closestNote, createProvider } from './library.js';
+import { namedOtherwise, tmdbFirstFilm } from './named-otherwise.js';
 import { asksWhichOne, pickTerms, stepZero, lookupHeldFilm } from './step-zero.js';
-import { convertForWhatsApp, fmtBytes, conversionClock } from '../../media/ffmpeg.js';
+import { convertForWhatsApp, fmtBytes, conversionClock, lowQualityMedia, LOW_QUALITY } from '../../media/ffmpeg.js';
+import { wantedQuality, qualityFileName, qualityWords } from '../../core/quality-tag.js';
 import { segmentsReady } from '../../media/segmented.js';
 import { downloadToFile, safeFilename, fmtDuration } from '../../media/download.js';
 import { extractYear, whyOtherFilm, typedYearOf, sameTitleWords, yearsApart } from '../../util/fuzzy.js';
@@ -200,6 +202,11 @@ function contentCheckRecord(verdict, call = null) {
 function fileSize(p) {
   try { return fs.statSync(p).size; } catch { return null; }
 }
+
+// The copy a job makes: '480p' for a "#request-480p", else null (the full
+// file). A 480p job and a full one for the same film are two copies, never
+// duplicates of each other (src/core/quality-tag.js).
+const copyOf = (p) => p?.record?.quality ?? null;
 
 function sameFilm(a, b) {
   if (!a || !b) return false;
@@ -788,7 +795,7 @@ export default {
     const unique = [];
     for (const p of real) {
       const twin = [...since, ...unique].find((q) => destinationOf(q.record?.route) === destinationOf(p.record?.route)
-        && sameFilm(q.movie, p.movie));
+        && sameFilm(q.movie, p.movie) && copyOf(q) === copyOf(p));
       if (!twin) { unique.push(p); continue; }
       ctx.log.warn(`"${p.movie?.title}" is journalled by an earlier request as well - not resuming it twice`);
       // Its work is not thrown away when the one resumed has none: it is the
@@ -2090,11 +2097,11 @@ export default {
    * spent (_parked): nothing will run it before the next start, so asking
    * again queues it (see _supersedeParked).
    */
-  _filmWaiting(ctx, movie, route) {
+  _filmWaiting(ctx, movie, route, quality = null) {
     const want = destinationOf(route);
     const jobs = [...(ctx.store.get('pending', []) ?? []), ...(this._recovering ?? [])];
     return jobs.find((p) => !this._parked?.has(p.jobKey)
-      && destinationOf(p.record?.route) === want && sameFilm(p.movie, movie)) ?? null;
+      && destinationOf(p.record?.route) === want && sameFilm(p.movie, movie) && copyOf(p) === (quality ?? null)) ?? null;
   },
 
   /**
@@ -2123,13 +2130,14 @@ export default {
    * twin's does at recovery: the same film for the same place, as far as it
    * got, which the new job checks against the library before building on.
    */
-  _supersedeParked(ctx, movie, route, toKey = null) {
+  _supersedeParked(ctx, movie, route, toKey = null, quality = null) {
     const handed = [];
     if (!this._parked?.size) return handed;
     const want = destinationOf(route);
     const workDir = ctx.config.media?.workDir;
     for (const p of ctx.store.get('pending', []) ?? []) {
-      if (!this._parked.has(p.jobKey) || destinationOf(p.record?.route) !== want || !sameFilm(p.movie, movie)) continue;
+      if (!this._parked.has(p.jobKey) || destinationOf(p.record?.route) !== want || !sameFilm(p.movie, movie)
+        || copyOf(p) !== (quality ?? null)) continue;
       handed.push(...this._asFollowers(p));
       let adopted = false;
       if (toKey && workDir) {
@@ -2853,6 +2861,8 @@ export default {
       year: null,
       rated: null,
       detail: null,
+      // "#request-480p": a smaller copy, where the feature is on (quality-tag.js).
+      ...(wantedQuality(ctx.config, msg) ? { quality: wantedQuality(ctx.config, msg) } : {}),
     };
     // Decided now and carried on the record - which is what the journal
     // stores - so delivery, notifications and a post-restart resume all use
@@ -3193,6 +3203,18 @@ export default {
       if (asSeries) return answerAsSeries(asSeries);
       ctx.log.info(`no match for "${text}" even after researching the library`);
       return finish('not-found', 'no matching film', cfg.reactions.notFound);
+    }
+
+    // A short or an unrated record OMDb took the words for, when the server
+    // holds the film meant under another name: "The F Word 2013" (What If)
+    // and "wardogs" (War Dogs), 2026-10-28 (named-otherwise.js). The request
+    // goes on as the server's film, gated on its own rating.
+    const otherwise = await this._namedOtherwise(ctx, found.movie, text);
+    if (otherwise) {
+      ctx.log.info(`"${text}": OMDb's ${found.movie.title} (${found.movie.year}) is not on the server, `
+        + `but ${otherwise.movie.title} (${otherwise.movie.year}) is - ${otherwise.via}`);
+      record.corrected = otherwise.movie.title;
+      found = otherwise;
     }
 
     let movie = found.movie;
@@ -3621,7 +3643,7 @@ export default {
     // ever queued, so "asked for twice" (beta004) can only be tried with a
     // film that is genuinely waiting.
     const waitingFor = testing ? null : route;
-    const early = this._filmWaiting(ctx, movie, waitingFor);
+    const early = this._filmWaiting(ctx, movie, waitingFor, record.quality);
     if (early) return this._duplicateFilm(ctx, { msg, record, movie, route, react, twin: early });
 
     /* --------- 4c. The bypass list, and what the AI check can clear -- */
@@ -3704,7 +3726,9 @@ export default {
         const why = gate.checked ? ` — the AI check did not clear it (${notClearedWhy({ verdict, call, failure: failed })})` : '';
         if (!gate.checked) ctx.log.info(`blocked: ${movie.title} is rated ${movie.rated || 'unrated'}`);
         await ratedReply(`${movie.title} (${movie.year}) is rated ${movie.rated || 'unrated'}.`);
-        return finish('blocked-rating', `rated ${movie.rated || 'unrated'}${why}`, cfg.reactions.rated);
+        // 🔞 when the check found nudity in it, ⛔ when it never said so.
+        const emoji = verdict?.nudity === true ? (cfg.reactions.nudity || cfg.reactions.rated) : cfg.reactions.rated;
+        return finish('blocked-rating', `rated ${movie.rated || 'unrated'}${why}`, emoji);
       }
     }
 
@@ -3726,7 +3750,7 @@ export default {
     // From this check to the journal entry below nothing may be awaited: the
     // journal is what the check reads, so a second request answered in
     // between would find nothing and be queued as well.
-    const twin = this._filmWaiting(ctx, movie, waitingFor);
+    const twin = this._filmWaiting(ctx, movie, waitingFor, record.quality);
     if (twin) return this._duplicateFilm(ctx, { msg, record, movie, route, react, twin });
     // Where a real request is queued, a test says it passed, and stops: "as
     // soon as bot can confirm it will download it should basically be like
@@ -3734,7 +3758,7 @@ export default {
     // interrupting actual requests" (the operator, 2026-09-29).
     if (testing) return this._testPassed(ctx, { msg, record, movie, hit, react, bypassReason });
     const jobKey = `${msg.id}:${movie.imdbId ?? movie.title}`;
-    const followers = this._supersedeParked(ctx, movie, route, jobKey);
+    const followers = this._supersedeParked(ctx, movie, route, jobKey, record.quality);
 
     // Said on the film's History row, so whoever reads the panel knows what
     // was sent and why. On 2026-10-11 at 11:21 UTC jake's "fast and furios
@@ -4017,6 +4041,30 @@ export default {
    * hourly check's history findings skip it (incident-scan.js), as they skip
    * every beta row, a test's refusals included.
    */
+  /**
+   * The server's film when OMDb took a request for a film the server does not
+   * hold, under another name (named-otherwise.js), as { movie, via }, or
+   * null. Any fault leaves the request as OMDb read it.
+   */
+  async _namedOtherwise(ctx, movie, text) {
+    if (!obscureReason(movie)) return null;
+    try {
+      const provider = createProvider(ctx.config.library ?? {});
+      if (!provider.configured || typeof provider.libraryIndex !== 'function') return null;
+      const key = ctx.config.movieRequests?.theatrical?.tmdbApiKey;
+      const hit = await namedOtherwise({
+        movie, typed: text, index: await provider.libraryIndex(),
+        tmdb: key ? (q, y) => tmdbFirstFilm(q, y, key) : null,
+      });
+      if (!hit) return null;
+      const again = await lookupById(hit.imdbId, { apiKey: ctx.config.omdb.apiKey });
+      return again ? { ...again, via: hit.via } : null;
+    } catch (err) {
+      ctx.log.warn(`looking for "${text}" under another name failed: ${err.message}`);
+      return null;
+    }
+  },
+
   async _testPassed(ctx, { msg, record, movie, hit, react, bypassReason = null }) {
     const cfg = ctx.config.movieRequests;
     const code = record.test ?? testCodeOf(record.route);
@@ -4024,7 +4072,8 @@ export default {
     // Why a film its rating would block goes out, as on a queued row.
     if (bypassReason) record.override = bypassReason;
     record.status = 'test-passed';
-    record.detail = `test${code ? ` ${code}` : ''}: would send ${movie.title} (${movie.year})${size} — nothing was downloaded`;
+    const small = record.quality === LOW_QUALITY ? ` ${qualityWords(ctx.config.media)}` : '';
+    record.detail = `test${code ? ` ${code}` : ''}: would send ${movie.title} (${movie.year})${small}${size} — nothing was downloaded`;
     record.finishedAt = Date.now();
     this.upsertHistory(ctx, record);
     ctx.log.info(`🧪 test passed${code ? ` (${code})` : ''}: would send ${movie.title} (${movie.year})`
@@ -4038,7 +4087,7 @@ export default {
     // 2026-09-30 ("message needs to be neater paragraphed").
     try {
       await ctx.bot.sendText(msg.chatJid,
-        `✅ *Test passed*${code ? ` ($${code})` : ''}\n\nThe bot would send *${plainText(movie.title)}* (${movie.year})${hit?.size ? `, ${fmtBytes(hit.size)}` : ''}.\n`
+        `✅ *Test passed*${code ? ` ($${code})` : ''}\n\nThe bot would send *${plainText(movie.title)}* (${movie.year})${small}${hit?.size ? `${small ? ' (the full file is ' : ', '}${fmtBytes(hit.size)}${small ? ')' : ''}` : ''}.\n`
           + 'Nothing was downloaded.',
         { quoted: msg });
     } catch (err) { ctx.log.warn(`could not say the test passed: ${err.message}`); }
@@ -4068,11 +4117,12 @@ export default {
   async deliver({ msg, movie, hit, ctx, job, record, react, jobKey }) {
     const cfg = ctx.config.movieRequests;
     const isBeta = !!record?.route?.beta;
-    const mediaCfg = ctx.config.media;
+    // A "#request-480p" is encoded small (ffmpeg.js lowQualityMedia); its record carries that through a restart.
+    const mediaCfg = record?.quality === LOW_QUALITY ? lowQualityMedia(ctx.config.media) : ctx.config.media;
     const workDir = mediaCfg.workDir;
     fs.mkdirSync(workDir, { recursive: true });
 
-    const outName = safeFilename(movie.title, movie.year, '.mp4');
+    const outName = qualityFileName(safeFilename(movie.title, movie.year, '.mp4'), record?.quality);
     // "Plandemic (2020)", or the title alone for a public link queued with no year.
     const film = filmLabel(movie);
     // The film's work, found again by its job's key after a restart (see
@@ -5010,6 +5060,7 @@ export default {
         senderJid: msg.senderJid, senderNumber: msg.senderNumber ?? null,
         senderNumberDisplay: msg.senderNumberDisplay ?? null, pushName: msg.pushName ?? null,
         timestamp: msg.timestamp ?? null, messageType: msg.messageType ?? null, text: msg.text ?? '',
+        ...(msg.quality ? { quality: msg.quality } : {}),
       },
       request: record.request,
       title,

@@ -500,6 +500,16 @@ most two, and the bot sends the request again once (it refuses one already
 re-run or re-posted, or still on its way). Anything that is not re-run goes in the report as advice: what to
 re-run, and how (the panel's History tab has a Re-run button on each row).
 
+A ticket an admin **added by hand** on the Tickets tab (a `member-issue`
+whose `report.source` is `"manual"`) is reconciled by you: once you have
+found it fixed - by your fix, or because it already works - or explained
+it plainly, resolve it, with a note the admins will read on the tab:
+
+    {"op":"resolve-ticket","n":<report.ticket>,"note":"<what you found and did, one or two sentences>"}
+
+Only the hand-added tickets this run's findings name, and only resolved,
+never reopened. One you could not settle stays open: say why in the report.
+
 ### 8. Write the report
 
 Write `{{RUN_DIR}}/report.md` early and keep it current, so that running

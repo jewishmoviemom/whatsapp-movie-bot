@@ -31,6 +31,37 @@ export function effectiveEncode(cfg) {
     : { preset: cfg.preset, maxHeight: cfg.maxHeight };
 }
 
+/** The tag a small copy is asked for with ("#request-480p"), and its label. */
+export const LOW_QUALITY = '480p';
+
+/**
+ * The media settings for a "#request-480p" job: always encoded (a file that
+ * would fit as it is still goes out smaller), at most lowQuality.maxHeight
+ * tall, its video bitrate capped at lowQuality.videoKbps, and never over
+ * lowQuality.maxMB - so the file is counted in megabytes, not gigabytes. A
+ * long film gets a lower bitrate to fit; a short one never more than the cap.
+ */
+export function lowQualityMedia(media = {}) {
+  const lq = { maxHeight: 480, videoKbps: 800, audioKbps: 96, maxMB: 950, preset: 'superfast', ...(media.lowQuality ?? {}) };
+  const cap = Math.max(50, Number(lq.maxMB) || 950) * 1024 ** 2;
+  return {
+    ...media,
+    quality: LOW_QUALITY,
+    strategy: 'always-transcode',
+    encodeProfile: 'custom',
+    preset: lq.preset || 'superfast',
+    maxHeight: Number(lq.maxHeight) || 480,
+    audioBitrateK: Number(lq.audioKbps) || 96,
+    maxVideoBitrate: Math.max(200, Number(lq.videoKbps) || 800) * 1000,
+    maxOutputBytes: Math.min(Number(media.maxOutputBytes) || cap, cap),
+  };
+}
+
+/** The highest video bitrate an encode may use: 8 Mbps, or a 480p job's cap. */
+export const maxVideoBps = (cfg) => Math.min(8_000_000, Number(cfg?.maxVideoBitrate) || 8_000_000);
+/** The lowest: 400 kbps, or less when a 480p job's cap is lower. */
+export const minVideoBps = (cfg) => Math.min(400_000, maxVideoBps(cfg));
+
 export async function checkTools(cfg) {
   const result = { ffmpeg: false, ffprobe: false, ffmpegVersion: null, error: null };
   try {
@@ -46,6 +77,25 @@ export async function checkTools(cfg) {
 }
 
 /** Inspect a media file: duration, streams, and whether it is already WhatsApp-ready. */
+/**
+ * Which sound stream a post keeps: the English one if the file has one, else
+ * the first. The bot used to take the first unconditionally; One-Punch Man
+ * S03E10 (an mkv with Japanese sound ahead of the English, 2026-10-29) went
+ * to the group in Japanese and Bentzi Marinelli's report ended as ticket #7.
+ * Commentary and descriptive tracks do not count as the English to keep.
+ */
+export function pickAudioIndex(audios) {
+  const isEnglish = (a) => /^(en|eng)$/i.test(a.tags?.language ?? '');
+  const plain = (a) => !/comment|descri/i.test(a.tags?.title ?? '') && !a.disposition?.comment && !a.disposition?.visual_impaired;
+  const i = audios.findIndex((a) => isEnglish(a) && plain(a));
+  return i >= 0 ? i : 0;
+}
+
+/** The `-map` argument for the sound a post keeps (see pickAudioIndex). */
+export function audioMap(info) {
+  return `0:a:${Number(info?.audio?.index ?? 0)}?`;
+}
+
 export async function probe(filePath, cfg) {
   const { stdout } = await execFileAsync(cfg.ffprobePath, [
     '-v', 'quiet',
@@ -57,7 +107,9 @@ export async function probe(filePath, cfg) {
 
   const data = JSON.parse(stdout);
   const video = data.streams.find((s) => s.codec_type === 'video');
-  const audio = data.streams.find((s) => s.codec_type === 'audio');
+  const audios = data.streams.filter((s) => s.codec_type === 'audio');
+  const audioIndex = pickAudioIndex(audios);
+  const audio = audios[audioIndex];
   const size = Number(data.format?.size ?? fs.statSync(filePath).size);
   const duration = Number(data.format?.duration ?? 0);
   const num = (v) => (v == null || v === 'N/A' || !isFinite(Number(v)) ? null : Number(v));
@@ -86,6 +138,8 @@ export async function probe(filePath, cfg) {
       timeBase: video.time_base ?? null,
     } : null,
     audio: audio ? {
+      // Its position among the sound streams, for `-map 0:a:N` (audioMap).
+      index: audioIndex,
       codec: audio.codec_name,
       channels: Number(audio.channels ?? 0),
       bitrate: Number(audio.bit_rate ?? 0),
@@ -108,6 +162,9 @@ export function planConversion(info, cfg) {
   const compatAudio = ['aac', 'mp3'].includes(info.audio?.codec);
   const isMp4 = /mp4|mov|m4a/.test(info.container ?? '');
 
+  if (cfg.quality === LOW_QUALITY) {
+    return { action: 'encode', reason: `a ${LOW_QUALITY} copy was asked for: at most ${effectiveEncode(cfg).maxHeight}p, ${Math.round(maxVideoBps(cfg) / 1000)}kbps, under ${fmtBytes(cfg.maxOutputBytes)}` };
+  }
   if (cfg.strategy === 'always-transcode') return { action: 'encode', reason: 'strategy=always-transcode' };
   if (cfg.strategy === 'copy-only') {
     if (!fitsSize) return { action: 'reject', reason: `file is ${fmtBytes(info.size)}, over the ${fmtBytes(cfg.maxOutputBytes)} limit, and strategy is copy-only` };
@@ -148,8 +205,9 @@ export function targetVideoBitrate(durationSec, cfg) {
   const audioBits = cfg.audioBitrateK * 1000 * durationSec;
   const videoBits = totalBits - audioBits;
   const bps = Math.floor(videoBits / Math.max(1, durationSec));
-  // Below ~400kbps the result is not worth sending; above 8Mbps is pointless here.
-  return Math.max(400_000, Math.min(bps, 8_000_000));
+  // Below ~400kbps the result is not worth sending; above 8Mbps is pointless
+  // here. A 480p job's own cap is lower (lowQualityMedia).
+  return Math.max(minVideoBps(cfg), Math.min(bps, maxVideoBps(cfg)));
 }
 
 function fmtBytes(n) {
@@ -317,7 +375,7 @@ export async function convertForWhatsApp(input, outPath, cfg, {
   const part = `${outPath}.part`;
   if (plan.action === 'remux') {
     await run(
-      ['-i', input, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', part],
+      ['-i', input, '-map', '0:v:0', '-map', audioMap(info), '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', part],
       { cfg, durationSec: info.duration, onProgress, signal },
     );
     fs.renameSync(part, outPath);
@@ -464,7 +522,7 @@ export function buildEncodeArgs({ input, outPath, info, cfg, encoder }) {
   const scale = info.video?.height > maxHeight ? ['-vf', `scale=-2:${maxHeight}`] : [];
   return [
     '-i', input,
-    '-map', '0:v:0', '-map', '0:a:0?',
+    '-map', '0:v:0', '-map', audioMap(info),
     ...scale,
     ...videoEncodeArgs(cfg, encoder, targetVideoBitrate(info.duration, cfg)),
     '-c:a', cfg.audioCodec,

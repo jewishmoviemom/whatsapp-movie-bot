@@ -1,5 +1,7 @@
 import log from '../util/logger.js';
 import { ticketLabel } from './issue-tickets.js';
+import { findSeries as realFindSeries, listSeasons as realListSeasons } from '../plugins/tv-requests/jellyfin-tv.js';
+import { bestMatch } from '../util/fuzzy.js';
 
 const logger = log.scope('discussion-tools');
 
@@ -26,8 +28,34 @@ const MAX_ROWS = 10;
  * @param notify      async (text) => posts to the notifications group
  * @param now         () => ms
  */
-export function createDiscussionTools({ stateStore, getConfig, createProvider, nextTicket, notify, now = () => Date.now() }) {
+export function createDiscussionTools({ stateStore, getConfig, createProvider, nextTicket, notify, now = () => Date.now(), findSeries = realFindSeries, listSeasons = realListSeasons }) {
   const tickets = () => stateStore.namespace('agent-tickets');
+
+  // rawSearch is films only: on 2026-10-29 the agent searched "Impractical Jokers
+  // S13", saw no film, and opened a ticket saying the season was not on the
+  // server (it held seven episodes). A show the way a TV request finds it, with its seasons and how many
+  // episodes each holds. Null when there is none, or when the lookup fails:
+  // the film search's answer stands alone then.
+  async function findShow(provider, term) {
+    try {
+      await provider.ensureToken?.();
+      const opts = { base: provider.base, token: provider.token, userId: provider.userId, bestMatch };
+      if (!opts.base || !opts.token) return null;
+      const series = await findSeries(term.replace(/\bs\d+(\s*e\d+.*)?$/i, '').trim() || term, opts)
+        ?? await findSeries(term, opts);
+      if (!series) return null;
+      const seasons = (await listSeasons(series.id, opts).catch(() => [])).filter((x) => x.episodes !== 0);
+      return {
+        name: String(series.name ?? series.title ?? '').slice(0, 120),
+        year: series.year ?? null,
+        type: 'Series',
+        seasons: seasons.map((x) => `S${x.season}: ${x.episodes ?? '?'} episode(s)`),
+      };
+    } catch (err) {
+      logger.warn(`series search for "${term}" failed: ${err.message}`);
+      return null;
+    }
+  }
 
   async function searchLibrary({ term }) {
     const t = String(term ?? '').trim().slice(0, 120);
@@ -42,6 +70,8 @@ export function createDiscussionTools({ stateStore, getConfig, createProvider, n
         year: r.year ?? r.ProductionYear ?? null,
         type: String(r.type ?? r.Type ?? '').slice(0, 30) || null,
       })).filter((m) => m.name);
+      const show = await findShow(provider, t);
+      if (show) matches.push(show);
       return matches.length ? { matches, count: matches.length } : { matches: [], note: `nothing on the server matches "${t}"` };
     } catch (err) {
       logger.warn(`library search for "${t}" failed: ${err.message}`);

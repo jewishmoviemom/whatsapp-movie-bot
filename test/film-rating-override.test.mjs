@@ -503,6 +503,10 @@ console.log('=== an R film not on the list is cleared by a sure no-nudity and st
     ok(line === "⛔ Kill Me Three Times (2014) — rated R, can't be posted"
       && b.out.some((e) => e.op === 'text' && e.jid === REQ && e.body === 'Kill Me Three Times (2014) is rated R.'),
     `  and the group is told what a rated film always got: "${line}"`);
+    // 🔞 only where the check found nudity (the operator, 2026-10-28:
+    // "switch rated r with nudity to 🔞"); unsure or no answer keeps ⛔.
+    const emoji = b.out.filter((e) => e.op === 'react').at(-1)?.emoji;
+    ok(emoji === (v === NUDE ? '🔞' : '⛔'), `  reacted ${emoji}`);
   }
   reset('fail');
   const skipped = harness({ gemini: CLEARS });

@@ -26,7 +26,7 @@ console.log('=== every feature has its own number, never reused ===');
   ok(new Set([...codes, ...RETIRED_CODES]).size === codes.length + RETIRED_CODES.length, 'no two features, live or retired, share a number');
   ok(RETIRED_CODES.includes('beta001') && !FEATURES.some((f) => f.code === 'beta001' || f.key === 'movie-pick-list'),
     'the operator\'s beta001, the "which one?" list, is retired now that every group has it: neither its number nor its key is reused');
-  ok(codes.join() === 'beta003,beta004,beta005', 'the rest were numbered in the order they were added');
+  ok(codes.join() === 'beta003,beta004,beta005,beta006', 'the rest were numbered in the order they were added');
   // beta002, TV place in line, was taken off beta for good on the operator's
   // word (2026-09-29); its number stays retired, never handed out again.
   ok(RETIRED_CODES.includes('beta002') && !codes.includes('beta002'), 'beta002 is retired, not reused');

@@ -130,6 +130,8 @@ export function slimMessage(msg) {
     senderNumberDisplay: msg.senderNumberDisplay ?? null, pushName: msg.pushName ?? null,
     timestamp: msg.timestamp ?? null, messageType: msg.messageType ?? null, text: msg.text ?? '',
     ...(msg.reaction ? { reaction: { ...msg.reaction } } : {}),
+    // "#request-480p", kept through a pause or a restart (quality-tag.js).
+    ...(msg.quality ? { quality: msg.quality } : {}),
   };
 }
 

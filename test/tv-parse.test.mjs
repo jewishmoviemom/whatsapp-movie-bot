@@ -413,5 +413,13 @@ console.log('=== a season typed as a word (Chad powers season two, 2026-10-18) =
   ok(p('Ten Percent').show === 'Ten Percent', 'a number word without a season word is left alone');
 }
 
+
+console.log('=== "session" typed for "season" (YR, 2026-10-26: euphoria session 03 E01-08) ===');
+{
+  const r = p('euphoria session 03 E01-08');
+  ok(r.show === 'euphoria' && r.season === 3 && r.episodeRange?.from === 1 && r.episodeRange?.to === 8, '"euphoria session 03 E01-08" -> euphoria S03 E1-8');
+  const s9 = p('Session 9');
+  ok(s9.show === 'Session 9' && s9.season == null, '"Session 9" stays a title');
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

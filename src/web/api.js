@@ -16,7 +16,7 @@ import { DEFAULT_IDLE_MINUTES, effectiveIdleMinutes, ownIdleMinutes, parseIdleMi
 import { verifyPassword } from '../util/crypto.js';
 import { checkTools, fmtBytes, encoderStatus } from '../media/ffmpeg.js';
 import { MODEL_PREFERENCES } from '../core/ai-providers.js';
-import { listTickets, setTicketStatus } from '../core/tickets.js';
+import { addTicket, listTickets, setTicketStatus } from '../core/tickets.js';
 import { aggregateMembers, memberDetail, assignedMember, formatPhone, phoneOut, phonesInText } from '../core/members.js';
 import { parseTvRequest } from '../plugins/tv-requests/parse.js';
 import { parseMediaUrl, urlToRequestText } from '../util/media-url.js';
@@ -1136,6 +1136,16 @@ export function createApiRouter({ configStore, bot, queue, linkQueue = null, plu
   router.get('/tickets', guard, (req, res) => {
     const list = listTickets({ dataDir: bot.dataDir, stateStore });
     res.json({ tickets: list, open: list.filter((t) => t.status === 'open').length });
+  });
+
+  /** Add a ticket by hand, for a problem that never came as an #issue (tickets.js addTicket). */
+  router.post('/tickets', guard, (req, res) => {
+    const by = req.session?.user?.username ?? null;
+    const b = req.body ?? {};
+    const r = addTicket({ dataDir: bot.dataDir, stateStore }, { text: b.text, who: b.who, number: b.number, group: b.group, by });
+    if (r.error) return res.status(400).json({ ok: false, error: r.error });
+    audit(req, `added ticket #${ticketLabel(r.ticket.n)} by hand${r.ticket.who ? ` for ${r.ticket.who}` : ''}`, String(r.ticket.text).slice(0, 200), res);
+    res.json({ ok: true, ticket: r.ticket });
   });
 
   /** Resolve or reopen a ticket, with a note. */

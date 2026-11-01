@@ -63,7 +63,7 @@ import crypto from 'node:crypto';
 import { redactPersonal } from '../util/mailer.js';
 import { sanitize } from './hourly-checks.js';
 import { FEATURES, betaConfig, featureMode } from './beta.js';
-import { parseTvRequest } from '../plugins/tv-requests/parse.js';
+import { parseTvRequest, codeLeftIn } from '../plugins/tv-requests/parse.js';
 import { numbersInCodes } from '../plugins/tv-requests/withheld.js';
 import { restartAdvice, MAX_INTERRUPTIONS, askedAgain, tvEpisodes } from './hourly-policy.js';
 import { betaFindings } from './beta-scan.js';
@@ -623,6 +623,14 @@ function tvMissFindings({ state, names }) {
   const out = [];
   for (const m of Array.isArray(misses) ? misses : []) {
     if (!m?.key || m.resolved) continue;
+    // A miss recorded before the bot answered a mistyped code with ✍️ ("SO1E11-E20",
+    // the letter O, 2026-10-18) stays on the list for good; the request is
+    // written wrong, not a gap, and is reported hour after hour otherwise.
+    if (m.reason === 'not-found' || /^no series matching/.test(m.detail ?? '')) {
+      let left = null;
+      try { left = codeLeftIn(parseTvRequest(m.request ?? '')?.show); } catch { /* unparsable: keep it */ }
+      if (left) continue;
+    }
     out.push({
       fp: `miss:${m.key}`,
       again: true,
@@ -2450,6 +2458,40 @@ export function agentTicketFindings({ state = {}, since = 0 }) {
   });
 }
 
+/**
+ * A ticket an admin added by hand on the Tickets tab (tickets.js addTicket,
+ * state 'manual-tickets'), for a problem that never came as an #issue. The
+ * operator, 2026-10-30: "make me an option to manually add tickets and of
+ * course you'll reconcile them accordingly". Researched like a member's
+ * #issue; one already resolved on the tab is left alone.
+ */
+export function manualTicketFindings({ state = {}, since = 0 }) {
+  const list = state?.['manual-tickets']?.list;
+  if (!Array.isArray(list)) return [];
+  const status = state?.tickets?.status ?? {};
+  return list.filter((t) => t && t.n != null && Number(t.at) >= since && status[t.n]?.status !== 'resolved').map((t) => {
+    const unopenable = UNOPENABLE.test(String(t.text ?? ''));
+    const who = t.who ?? 'nobody named';
+    const text = redactPersonal(String(t.text ?? ''));
+    return {
+      fp: `manual-ticket:${t.n}`,
+      kind: 'member-issue',
+      severity: 'error',
+      at: t.at,
+      title: `Ticket #${ticketLabel(t.n)} - added by hand by ${t.by ?? 'an admin'}, for ${who}${t.group ? ` in ${t.group}` : ''}: "${text.slice(0, 200)}"`,
+      request: null,
+      evidence: [`${stamp(t.at)} the ticket: "${text.slice(0, 1200)}"`],
+      report: { at: t.at, reporter: who, group: t.group ?? null, groupJid: null, text: String(t.text ?? ''), ticket: t.n, source: 'manual' },
+      ...(unopenable ? { unopenable: true } : {}),
+      remedy: (unopenable ? `${UNOPENABLE_REMEDY} ` : '') + 'An admin added this ticket by hand. Research it as an #issue: find the film or episode '
+        + 'and the send in History and the logs, fix it in code if it is code, and say plainly what you found, what you did, '
+        + 'and whether the ticket can be resolved.',
+      restartHelps: false,
+      rerunnable: false,
+    };
+  });
+}
+
 /* --------------------------- support tickets -------------------------- */
 
 // What Ticket Tool posts on its own when a ticket opens: not an answer.
@@ -2678,6 +2720,7 @@ export function scan({
     ...wantedFindings({ state, since }),
     ...discordFindings({ tickets, state, config, since, now }),
     ...agentTicketFindings({ state, since }),
+    ...manualTicketFindings({ state, since }),
     ...repeatFindings({ chains, config, names, since }),
     ...policyMembers({ state, names, since }),
     ...diskFindings({ lines, disk, processStart, now, since, opt }),

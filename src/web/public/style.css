@@ -26,6 +26,22 @@
   }
 }
 
+/* An explicit choice from Settings → Control panel → Appearance.
+   "Auto" sets no attribute and leaves the media query above in charge, so the
+   panel follows the device's dark mode exactly as it always has. "Light" or
+   "Dark" set data-theme on <html>, and these win over the media block whatever
+   the OS is set to: an attribute selector scores (0,2,0) against the media
+   block's bare :root at (0,1,0), so source order does not matter. The two
+   palettes are the dark :root and the light media block, repeated verbatim. */
+:root[data-theme="light"] {
+  --bg: #f2f4f7; --bg2: #ffffff; --card: #ffffff; --line: #dde3ea;
+  --fg: #16202b; --muted: #5d6b7a;
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216; --bg2: #161b22; --card: #1a2029; --line: #2a323d;
+  --fg: #e6edf3; --muted: #8b97a6;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {

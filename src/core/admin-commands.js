@@ -17,6 +17,8 @@ import { libraryItemById, tvItemRefusal } from '../plugins/movie-requests/librar
 import { nextAsk } from '../plugins/tv-requests/next-part.js';
 import { addWantedNote } from './wanted.js';
 import { markExtras } from './mark-extras.js';
+import { addTicket, setTicketStatus } from './tickets.js';
+import { ticketLabel } from './issue-tickets.js';
 import log from '../util/logger.js';
 
 const logger = log.scope('admin-commands');
@@ -70,6 +72,7 @@ export function backupOriginalDescriptions(bot, dataDir, now = Date.now()) {
 const MUTATING_OPS = new Set([
   'apply-descriptions', 'post-descriptions', 'set-rule-sets', 'backup-descriptions', 'requeue', 'queue', 'queue-item',
   'pause-requests', 'resume-requests', 'trim-tv-requests', 'mark-extras', 'import-drive-links', 'post-drive-links',
+  'add-ticket', 'ticket-status',
 ]);
 
 /** One audit line describing what an admin command actually did. */
@@ -174,6 +177,16 @@ export function summariseAdminCommand(cmd, result, err = null) {
             : 'none needed it'),
       };
     }
+    case 'add-ticket':
+      return {
+        action: `added ticket #${ticketLabel(result?.ticket?.n ?? 0)} by hand${result?.ticket?.who ? ` for ${result.ticket.who}` : ''}`,
+        detail: redactPersonal(String(result?.ticket?.text ?? '')).slice(0, 500),
+      };
+    case 'ticket-status':
+      return {
+        action: `${result?.status === 'open' ? 'reopened' : 'resolved'} ticket #${ticketLabel(cmd.n)}`,
+        detail: result?.note ? redactPersonal(String(result.note)).slice(0, 500) : null,
+      };
     case 'wanted-note':
       return {
         action: `added a note to ${result?.title ?? cmd.key}${result?.year ? ` (${result.year})` : ''} on the wanted list`,
@@ -306,6 +319,30 @@ export async function runAdminCommand(cmd, {
       });
       if (r.error) throw new Error(r.error);
       return { ok: true, title: r.entry.title ?? null, year: r.entry.year ?? null, note: r.note };
+    }
+
+    case 'add-ticket': {
+      // A ticket added by hand, as the Tickets tab's form does - for an
+      // operator on the box, who has no panel session (the operator,
+      // 2026-10-30: "make me an option to manually add tickets").
+      if (!stateStore) throw new Error('stateStore unavailable');
+      const r = addTicket({ dataDir, stateStore }, {
+        text: cmd.text, who: cmd.who, number: cmd.number, group: cmd.group, by: String(cmd.by ?? 'local shell').slice(0, 80),
+      });
+      if (r.error) throw new Error(r.error);
+      return { ok: true, ticket: r.ticket };
+    }
+
+    case 'ticket-status': {
+      // Resolve or reopen a ticket with a note, as the tab's Resolve does: how
+      // a ticket is reconciled once what it asked for is done.
+      if (!stateStore) throw new Error('stateStore unavailable');
+      const status = cmd.status === 'open' ? 'open' : 'resolved';
+      const r = setTicketStatus({ dataDir, stateStore }, cmd.n, {
+        status, by: String(cmd.by ?? 'local shell').slice(0, 80), note: cmd.note ?? null,
+      });
+      if (!r) throw new Error('no ticket has that number');
+      return { ok: true, n: Number(cmd.n), ...r };
     }
 
     case 'decrypt-failures': {

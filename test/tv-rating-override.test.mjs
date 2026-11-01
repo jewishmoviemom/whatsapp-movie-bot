@@ -533,11 +533,19 @@ console.log('=== a TV-MA episode not on the list is cleared by a sure no-nudity 
   const one = harness({ gemini: CLEARS, replyOnBlock: true });
   await ask(one, 'fullmetal alchemist brotherhood S01E14');
   const r1 = one.history()[0];
-  ok(one.jobs.length === 0 && one.reacted.at(-1) === '⛔' && r1.status === 'blocked-rating',
-    `S01E14 on its own, "nudity": refused with ⛔, as blocked-rating - never blocked-content (${r1.status})`);
+  // 🔞 since 2026-10-28, the operator: "switch rated r with nudity to 🔞".
+  ok(one.jobs.length === 0 && one.reacted.at(-1) === '🔞' && r1.status === 'blocked-rating',
+    `S01E14 on its own, "nudity": refused with 🔞, as blocked-rating - never blocked-content (${r1.status})`);
   ok(r1.detail === 'S01E14 rated TV-MA · 1 not cleared by the AI check (Gemini said nudity), withheld on its rating: E14', `"${r1.detail}"`);
   ok(onNotify(one.texts)[0] === `⛔ ${FMA} S01E14 — rated TV-MA, can't be posted`
     && one.texts.find((t) => t.jid === TVREQ)?.body === `${FMA} S01E14 is rated TV-MA.`, 'with the words a rated episode always got');
+
+  // An episode the check could not settle keeps ⛔: 🔞 says nudity was found.
+  reset();
+  verdicts.S01E14 = { nudity: null, confidence: 0, basis: 'unknown episode' };
+  const notSure = harness({ gemini: CLEARS });
+  await ask(notSure, 'fullmetal alchemist brotherhood S01E14');
+  ok(notSure.jobs.length === 0 && notSure.reacted.at(-1) === '⛔', `S01E14, the check unsure: refused with ⛔ (${notSure.reacted.at(-1)})`);
 
   reset();
   const off = harness({ gemini: { allowCleanRatedFilms: false } });

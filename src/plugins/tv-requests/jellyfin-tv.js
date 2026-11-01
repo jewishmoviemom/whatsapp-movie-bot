@@ -996,7 +996,9 @@ export function liveActionVariant(show) {
  */
 export function trailingSeasonVariant(show) {
   const s = String(show ?? '').trim();
-  const v = s.replace(/\s+(?:season|seasons|series)$/i, '').trim();
+  // "ted the series" (hourly check 20261026T010001Z) left "ted the" behind
+  // when only the word was dropped, so the article goes with it.
+  const v = s.replace(/\s+(?:the\s+)?(?:season|seasons|series)$/i, '').trim();
   return v && v !== s ? v : null;
 }
 
@@ -1016,6 +1018,36 @@ export function fillerVariant(show) {
   return v && v !== s ? v : null;
 }
 
+/**
+ * Titles with one interior word left out, for a word typed that the show's
+ * name does not carry: "marvels secret agents of shield s01" was answered "no
+ * series matching" (hourly check 20261027T030001Z) although "Marvel's Agents
+ * of S.H.I.E.L.D." is on the server - with "secret" in it the title scores
+ * 0.81, under the 0.9 the word search needs, and without it 0.96. Only titles
+ * of four words or more, never the first or last word, at most three tries.
+ */
+export function droppedWordVariants(show) {
+  const w = String(show ?? '').trim().split(/\s+/).filter(Boolean);
+  if (w.length < 4) return [];
+  const out = [];
+  for (let i = 1; i < w.length - 1 && out.length < 3; i++) out.push(w.filter((_, j) => j !== i).join(' '));
+  return out;
+}
+
+/**
+ * A regional qualifier typed after the title: "deal or no deal US version S05"
+ * was answered "no series matching" three times although "Deal or No Deal"
+ * (2023) is on the server (hourly check 20261025T190001Z) - "US version" says
+ * which national edition is wanted, it is not part of the name. Drops a
+ * trailing "(US|UK|American|...) (version|edition)". Null when the title does
+ * not end that way (a show really named so is tried as typed first).
+ */
+export function regionVersionVariant(show) {
+  const s = String(show ?? '').trim();
+  const v = s.replace(/\s+(?:the\s+)?(?:u\.?s\.?a?|u\.?k\.?|american|british|english|australian|canadian)\s+(?:version|edition)$/i, '').trim();
+  return v && v !== s ? v : null;
+}
+
 /** Looks the show up as typed, then, only if that finds nothing, in its other spellings. */
 export async function findSeries(show, opts = {}) {
   const found = await findSeriesOnce(show, opts);
@@ -1030,8 +1062,12 @@ export async function findSeries(show, opts = {}) {
       return newest ?? base;
     }
   }
-  for (const alt of [spacedVariant(show), numberWordVariant(show), studioVariant(show), digitVariant(show), bracketVariant(show), apostropheVariant(show), pluralVariant(show), elisionVariant(show), compoundVariant(show), trailingSeasonVariant(show), fillerVariant(show)]) {
+  for (const alt of [spacedVariant(show), numberWordVariant(show), studioVariant(show), digitVariant(show), bracketVariant(show), apostropheVariant(show), pluralVariant(show), elisionVariant(show), compoundVariant(show), trailingSeasonVariant(show), fillerVariant(show), regionVersionVariant(show)]) {
     if (!alt) continue;
+    const again = await findSeriesOnce(alt, opts);
+    if (again) return again;
+  }
+  for (const alt of droppedWordVariants(show)) {
     const again = await findSeriesOnce(alt, opts);
     if (again) return again;
   }

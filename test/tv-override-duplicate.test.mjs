@@ -374,15 +374,15 @@ console.log('=== the source keeps the order ===');
   const intake = src.slice(src.indexOf('// Rating gate, mirroring the movie rules.'), src.indexOf('const accepted = [];'));
   // Read for `waitingFor`: the request's route, or none for a beta test,
   // which is judged against the real queue (2026-09-29, beta.js).
-  const firstWaiting = intake.indexOf('this._waitingEpisodeIds(ctx, waitingFor)');
+  const firstWaiting = intake.indexOf('this._waitingEpisodeIds(ctx, waitingFor, quality)');
   const screening = intake.indexOf('await this._screenRated(');
-  const reread = intake.indexOf('this._waitingEpisodeIds(ctx, waitingFor)', screening);
+  const reread = intake.indexOf('this._waitingEpisodeIds(ctx, waitingFor, quality)', screening);
   ok(firstWaiting > 0 && firstWaiting < screening && reread > screening,
     'what is waiting is read before the checks, and read again after them');
   ok(/waiting,\s*\n?\s*limit:/.test(intake.slice(screening, screening + 300)), 'and the checks are told it');
   ok(!/\n    await /.test(intake.slice(reread, intake.indexOf('if (!queueing.length)'))),
     'nothing is awaited from the second read to the queue-room answer');
-  ok(/const waitingNow = this\._waitingEpisodeIds\(ctx, waitingFor\);\s*\n\s*for \(const \{ ep \} of screen\?\.waiting \?\? \[\]\) waitingNow\.add/.test(intake)
+  ok(/const waitingNow = this\._waitingEpisodeIds\(ctx, waitingFor, quality\);\s*\n\s*for \(const \{ ep \} of screen\?\.waiting \?\? \[\]\) waitingNow\.add/.test(intake)
     && !/waiting\.add\(id\)/.test(src), 'after the checks, what is waiting now decides, plus only what the checks skipped as waiting');
   const retry = src.slice(src.indexOf('_retryEpisodeLater(ctx'), src.indexOf('_noteWaitingForDisk('));
   const recover = src.slice(src.indexOf('async recoverPending'), src.indexOf('_retryEpisodeLater(ctx'));
