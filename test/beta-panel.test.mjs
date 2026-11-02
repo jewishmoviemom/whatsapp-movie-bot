@@ -298,8 +298,10 @@ console.log('=== History: a beta row is marked, and cannot be re-run into the ma
   // eslint-disable-next-line no-new-func
   // The requester's number (phoneOut, historyNumber) is test/phone-format.test.mjs's to check,
   // and the notes on what was sent (historyNotes) test/same-title-far-year-not-sent.test.mjs's.
+  // The Re-run button itself (rerunButton) is test/history-rerun-keeps-the-member.test.mjs's.
+  const rerun = app.match(/function rerunButton\(x\) \{[\s\S]*?\n\}/)[0];
   const historyRow = new Function('esc', 'historyTimeline', 'phoneOut', 'historyNumber', 'historyNotes',
-    `${fn}; return historyRow;`)(esc, () => '', (v) => v, () => null, () => '');
+    `${rerun}; ${fn}; return historyRow;`)(esc, () => '', (v) => v, () => null, () => '');
   const betaRow = historyRow({ title: 'Inception', request: 'inception', status: 'sent', beta: true });
   const mainRow = historyRow({ title: 'Inception', request: 'inception', status: 'sent' });
   ok(/🧪 beta/.test(betaRow), 'a beta row carries a 🧪 beta tag');

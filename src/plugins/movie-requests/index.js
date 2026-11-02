@@ -9,7 +9,7 @@ import { convertForWhatsApp, fmtBytes, conversionClock, lowQualityMedia, LOW_QUA
 import { wantedQuality, qualityFileName, qualityWords } from '../../core/quality-tag.js';
 import { segmentsReady } from '../../media/segmented.js';
 import { downloadToFile, safeFilename, fmtDuration } from '../../media/download.js';
-import { extractYear, whyOtherFilm, typedYearOf, sameTitleWords, yearsApart } from '../../util/fuzzy.js';
+import { normalizeTitle, extractYear, whyOtherFilm, typedYearOf, sameTitleWords, yearsApart } from '../../util/fuzzy.js';
 import fsSync from 'node:fs';
 import { dirname as pathDir, join as pathJoin } from 'node:path';
 import { fileURLToPath as _f } from 'node:url';
@@ -3102,6 +3102,32 @@ export default {
         if (onlyAsTyped.typed === undefined) delete record.typed;
         else record.typed = onlyAsTyped.typed;
         libraryYear = false;
+      }
+    }
+
+    // A weak match from OMDb's relaxed search is not an answer when the
+    // library holds a title that fits the words better. "Deadpool vs
+    // wolvarine" (Max N, 2026-11-01 09:41) was resolved to a 2022 fan short,
+    // "Wolverine Vs. Deadpool: Back to Weapon X" [search 0.75], and refused as
+    // not in the library while Deadpool & Wolverine (2024) sat on the server.
+    // Only a search match that scores below 0.9 is second-guessed, and only by
+    // a library title scoring clearly higher (researchLibrary's own bar).
+    if (found && found.method === 'search' && found.confidence < 0.9 && !extractYear(text)) {
+      try {
+        const better = await researchLibrary(text, ctx.config.library);
+        if (better && better.score >= found.confidence + 0.05
+            && normalizeTitle(better.title) !== normalizeTitle(found.movie.title)) {
+          const again = await lookupMovie(`${better.title}${better.year ? ` ${better.year}` : ''}`,
+            { apiKey: ctx.config.omdb.apiKey });
+          if (again) {
+            ctx.log.info(`research: OMDb's weak match for "${text}" (${found.movie.title}, ${found.confidence.toFixed(2)}) `
+              + `gives way to the library's "${better.title}" (${better.score.toFixed(2)})`);
+            found = again;
+            record.corrected = better.title;
+          }
+        }
+      } catch (err) {
+        ctx.log.warn(`library check of a weak match for "${text}" failed: ${err.message}`);
       }
     }
 

@@ -452,7 +452,7 @@ console.log('=== the History tab marks a film that was not checked ===');
   // And its notes on what was sent: a film the member had before, a film sent
   // in place of another (historyNotes, 2026-10-11).
   const historyRow = new Function('esc', 'fmtDur', `${clock}\n${phones}\n${fn('historyTimeline')}; ${fn('historyNotes')}; `
-    + `${fn('historyRow')}; return historyRow;`)(esc, fmtDur);
+    + `${fn('rerunButton')}; ${fn('historyRow')}; return historyRow;`)(esc, fmtDur);
   const row = { request: 'kill me three times', title: 'Kill Me Three Times', status: 'sent', at: Date.now() };
   ok(!/Not checked for nudity/.test(historyRow(row)), 'a checked film has no mark');
   ok(/Not checked for nudity[\s\S]*quota-daily/.test(historyRow({ ...row, contentCheckSkipped: 'quota-daily' })),

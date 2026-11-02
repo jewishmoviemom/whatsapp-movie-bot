@@ -851,8 +851,12 @@ console.log('=== settings cards: setting name and value ===');
   const panelCard = [...p.document.querySelectorAll('#tab-settings .card')].find((c) => c.querySelector('h2')?.textContent.trim() === 'Control panel');
   const out = await p.csv.csvFor(panelCard);
   const [head] = parseCsv(out.text);
-  ok(head[0] === 'Setting' && head[1] === 'Value', `columns: ${head.join(', ')}`);
+  // Part leads, and Detail follows, since the card gained its "Appearance —
+  // dark mode" sub-heading and hint (the theme switch, 2026-10-31): a card
+  // with sub-headings says which each setting is under.
+  ok(head[head.indexOf('Setting') + 1] === 'Value' && head.indexOf('Setting') <= 1, `columns: ${head.join(', ')}`);
   const rows = records(out.text);
+  ok(rows.some((r) => r.Part === 'Appearance — dark mode' && r.Setting.startsWith('Theme')), 'the theme is under its sub-heading');
   const get = (name) => rows.find((r) => r.Setting.startsWith(name))?.Value;
   ok(get('Port') === String(DEFAULT_CONFIG.web.port), `Port = ${get('Port')}`);
   ok(get('Log level') === DEFAULT_CONFIG.logging.level, `Log level = ${get('Log level')}`);

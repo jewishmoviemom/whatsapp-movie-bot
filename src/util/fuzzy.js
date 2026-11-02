@@ -535,6 +535,12 @@ export function stripSeriesDescriptor(s) {
   const out = orig
     .replace(new RegExp(`\\(\\s*(?:(?:19|20)\\d{2}\\s*)?${kind}\\s*(?:(?:19|20)\\d{2})?\\s*\\)`, 'gi'), ' ')
     .replace(new RegExp(`\\s+(?:the\\s+)?(?:new\\s+)?(?:(?:netflix|hbo|hulu|disney\\+?|prime|amazon|apple\\s*tv\\+?)\\s+)?(?:mini[\\s-]?series|tv\\s+series|tv\\s+show)\\s*$`, 'i'), ' ')
+    // "White collar full series if possible" (a member, 2026-11-02) asked for the
+    // whole run in words; the lookup tried the whole sentence and its words
+    // dropped one at a time, never the title alone, and answered "not in the
+    // library" for a show the library has.
+    .replace(/\s+(?:the\s+)?(?:(?:full|whole|complete|entire)\s+(?:series|show|run)|all\s+(?:the\s+)?seasons)(?:\s+(?:if|when)\s+(?:it'?s\s+)?(?:possible|you\s+can|u\s+can|available))?\s*$/i, ' ')
+    .replace(/\s+(?:if|when)\s+(?:it'?s\s+)?(?:possible|you\s+can|u\s+can|available)\s*$/i, ' ')
     .replace(/\s+/g, ' ').trim();
   return out || orig;
 }

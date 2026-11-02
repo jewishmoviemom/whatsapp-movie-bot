@@ -12,5 +12,13 @@ ok(stripSeriesDescriptor('Rafa tv show') === 'Rafa', 'trailing tv show');
 ok(stripSeriesDescriptor('The Late Show') === 'The Late Show', 'a title ending in Show stays');
 ok(stripSeriesDescriptor('Mini Series') === 'Mini Series', 'never returns empty');
 ok(stripSeriesDescriptor('Friends season 3') === 'Friends season 3', 'plain request untouched');
+// Incident: 2026-11-02, a member asked "White collar full series if possible" and was
+// told the show was not in the library, which has it. The ask for the whole run
+// is not part of the title.
+ok(stripSeriesDescriptor('White collar full series if possible') === 'White collar', 'full series if possible');
+ok(stripSeriesDescriptor('White collar the whole series') === 'White collar', 'the whole series');
+ok(stripSeriesDescriptor('White collar all seasons if you can') === 'White collar', 'all seasons if you can');
+ok(stripSeriesDescriptor('Friends if possible') === 'Friends', 'bare if possible');
+ok(stripSeriesDescriptor('The Complete Series') === 'The Complete Series' || stripSeriesDescriptor('The Complete Series').length > 0, 'never empty');
 if (fail) process.exit(1);
 console.log('tv-series-descriptor: ok');

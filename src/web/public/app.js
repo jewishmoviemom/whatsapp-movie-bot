@@ -25,7 +25,11 @@ applyTheme(savedTheme());
 {
   const sel = $('f-theme');
   if (sel) {
-    sel.value = savedTheme();
+    // Chosen by its option rather than sel.value: linkedom, which every panel
+    // suite runs the panel in, has no setter for a select's value, and this
+    // line at load threw before any of them could start.
+    const want = savedTheme();
+    sel.querySelectorAll('option').forEach((o) => { o.selected = o.value === want; });
     sel.addEventListener('change', (e) => {
       const m = applyTheme(e.target.value);
       try { localStorage.setItem(THEME_KEY, m); } catch { /* private mode */ }
@@ -1621,13 +1625,70 @@ async function loadMemberPicks() {
   }
   MEMBER_PICKS = map;
   MEMBER_PICK_NUMBERS = byNumber;
-  const list = $('q-member-list');
-  if (list) list.innerHTML = [...map.keys()].map((l) => `<option value="${esc(l)}"></option>`).join('');
   return map;
 }
-['q-member', 'pl-member'].forEach((id) => $(id)?.addEventListener('focus', () => {
-  loadMemberPicks().catch(() => { MEMBER_PICKS = null; });
-}));
+/* The roster labels a picker's text matches: by name, or by number digit for
+   digit once three are typed, so "352" finds +15558100180. */
+function memberPickMatches(text) {
+  const q = String(text ?? '').trim().toLowerCase();
+  const digits = phoneQuery(q);
+  return [...(MEMBER_PICKS?.keys() ?? [])].filter((l) => !q || l.toLowerCase().includes(q)
+    || (digits && l.replace(/[^0-9]/g, '').includes(digits)));
+}
+/* The operator, 2026-11-02: "in the phone browser ... when typing a name for
+   a member it doesn't open a dropdown selection like it does on the
+   computer". The pickers were an <input list> with a <datalist>, which a
+   desktop browser shows as a dropdown and a phone's mostly does not (iOS
+   Safari at best puts a few names above the keyboard). So the panel draws
+   the list itself, in the search dropdown's style, the same on every device. */
+function attachMemberPicker(id) {
+  const input = $(id);
+  if (!input) return;
+  const box = document.createElement('div');
+  box.className = 'search-results member-results hidden';
+  input.parentElement.appendChild(box);
+  let shown = [];
+  let sel = -1;
+  let focused = false;
+  const close = () => { box.classList.add('hidden'); sel = -1; };
+  const choose = (label) => { input.value = label; close(); };
+  const draw = () => {
+    shown = memberPickMatches(input.value).slice(0, 50);
+    if (!shown.length) {
+      box.innerHTML = '<div class="sr-empty">' + (MEMBER_PICKS?.size ? 'No member matches' : 'No members found') + '</div>';
+    } else {
+      box.innerHTML = shown.map((l, i) => '<div class="sr-item' + (i === sel ? ' sel' : '') + '" data-i="' + i + '"><span class="sr-what">' + esc(l) + '</span></div>').join('');
+    }
+    box.classList.remove('hidden');
+  };
+  const open = () => {
+    // Drawn only if the box still has the focus once the roster has come.
+    loadMemberPicks().then(() => { if (focused) draw(); })
+      .catch(() => { MEMBER_PICKS = null; });
+  };
+  input.addEventListener('focus', () => { focused = true; open(); });
+  input.addEventListener('input', () => { sel = -1; open(); });
+  // Picked on pointerdown, before the input's blur closes the list: a tap on
+  // a phone blurs first, and the list would be gone before the click landed.
+  box.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const item = e.target.closest('.sr-item');
+    if (item) choose(shown[Number(item.dataset.i)]);
+  });
+  input.addEventListener('blur', () => { focused = false; close(); });
+  input.addEventListener('keydown', (e) => {
+    if (box.classList.contains('hidden') || !shown.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length;
+      draw();
+    } else if (e.key === 'Enter' && sel >= 0) {
+      e.preventDefault();
+      choose(shown[sel]);
+    } else if (e.key === 'Escape') close();
+  });
+}
+['q-member', 'pl-member'].forEach(attachMemberPicker);
 /** The roster key for a picker's text: '' for none, or throws for text no member has. */
 window.memberKeyFrom = async (id) => {
   const text = ($(id)?.value ?? '').trim();

@@ -151,9 +151,9 @@ console.log('=== the panel and the routes ===');
       `${route} resolves the picked member and passes it on`);
   }
   const html = fs.readFileSync(new URL('../src/web/public/index.html', import.meta.url), 'utf8');
-  ok(/id="q-member"[^>]*list="q-member-list"/.test(html) && /id="pl-member"[^>]*list="q-member-list"/.test(html),
-    'both queue boxes have a member picker');
   const app = fs.readFileSync(new URL('../src/web/public/app.js', import.meta.url), 'utf8');
+  ok(/id="q-member"/.test(html) && /id="pl-member"/.test(html) && /\['q-member', 'pl-member'\]\.forEach\(attachMemberPicker\)/.test(app),
+    'both queue boxes have a member picker');
   ok((app.match(/memberKeyFrom\('(q|pl)-member'\)/g) ?? []).length === 3, 'all three queue buttons send the pick');
 }
 

@@ -411,6 +411,12 @@ input.emoji { text-align: center; font-size: 20px; padding: 6px; }
 .sr-item .sr-tab { font-size: 11px; color: var(--muted); margin-left: auto; white-space: nowrap; }
 .sr-item .sr-what { font-size: 13px; flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The member picker under the queue boxes: the search dropdown's look, sized
+   for a thumb on a phone. */
+.member-pick { position: relative; }
+.member-pick input { width: 100%; }
+.member-results { max-height: 45vh; }
+.member-results .sr-item { padding: 10px 10px; }
 .sr-empty { padding: 12px; color: var(--muted); font-size: 13px; text-align: center; }
 .sr-head { padding: 6px 10px 3px; font-size: 11px; text-transform: uppercase;
   letter-spacing: .5px; color: var(--muted); }

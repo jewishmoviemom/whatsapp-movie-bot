@@ -144,9 +144,10 @@
             <button class="btn small" id="btn-q-jf">Queue link</button>
           </div>
           <div class="row gap" style="margin-bottom:10px">
-            <input id="q-member" list="q-member-list" placeholder="for a member (optional): type a name or number" class="flex1" style="margin:0" autocomplete="off">
+            <!-- The panel's own dropdown (attachMemberPicker), not a
+                 <datalist>: a phone's browser never opened one. -->
+            <div class="member-pick flex1"><input id="q-member" placeholder="for a member (optional): type a name or number" style="margin:0" autocomplete="off"></div>
           </div>
-          <datalist id="q-member-list"></datalist>
           <div id="manual-note" class="muted small" style="margin-bottom:8px"></div>
           <div id="queue-list" class="list"><div class="empty">Nothing waiting.</div></div>
           <h3>Recently finished</h3>
@@ -188,7 +189,7 @@
             <input id="pl-year" placeholder="Year (optional)" inputmode="numeric" maxlength="4" style="margin:0;width:9em">
             <button class="btn small primary" id="btn-pl-queue">Queue</button>
           </div>
-          <input id="pl-member" list="q-member-list" placeholder="for a member (optional): type a name or number" autocomplete="off" style="margin-top:8px">
+          <div class="member-pick" style="margin-top:8px"><input id="pl-member" placeholder="for a member (optional): type a name or number" autocomplete="off" style="margin:0"></div>
           <div id="pl-note" class="muted small" style="margin-top:8px"></div>
         </div>
 
