@@ -81,7 +81,8 @@ function build({ activeAccount = 'main', unlinked = [], queues = [makeQueue()], 
   const bot = new FakeBot({ connects });
   const configStore = makeConfig(ACCOUNTS, activeAccount, failover);
   bot._activeId = () => configStore.get().whatsapp.activeAccount;
-  const sup = new FailoverSupervisor({ bot, configStore, queues });
+  // The machine is online here: test/failover-not-when-offline.test.mjs has the other case.
+  const sup = new FailoverSupervisor({ bot, configStore, queues, online: async () => true });
   // listAccounts() checks the filesystem for creds.json; override the linked flag.
   const realRanked = sup.ranked.bind(sup);
   sup.ranked = () => realRanked().map((a) => ({ ...a, linked: !unlinked.includes(a.id) }));

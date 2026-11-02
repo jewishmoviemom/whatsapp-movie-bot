@@ -24,6 +24,8 @@
  *    take over. Whatever was in flight is requeued, since a dead socket was
  *    never going to finish it.
  */
+import net from 'node:net';
+import dns from 'node:dns';
 import log from '../util/logger.js';
 import { listAccounts, activeAccount, switchAccount } from './accounts.js';
 
@@ -84,8 +86,51 @@ export function coverageFor(groups, cfg, phoneNumber) {
   return { total: need.size, covered: need.size - gaps.length, gaps };
 }
 
+/*
+ * Can this machine reach the internet at all? The operator, 2026-11-02:
+ * "failover of whatsapp account should not be attempted if issue is due to
+ * entire machine being offline". Every number connects from this same box,
+ * so when the box has no network a spare cannot connect either: switching
+ * would only mark a good number failed, put it in a cooldown, send a
+ * "switched numbers" email that is not true by the time anyone reads it, and
+ * tear down a session that would have come back by itself.
+ *
+ * Online means a TCP connection to any one of three unrelated public
+ * resolvers on 443 (by address, so a broken resolver is not mistaken for no
+ * network) AND a name WhatsApp itself needs resolving: a box that reaches
+ * addresses but resolves no names cannot reach WhatsApp on any number.
+ */
+const PROBE_ADDRESSES = ['1.1.1.1', '8.8.8.8', '9.9.9.9'];
+const PROBE_NAMES = ['web.whatsapp.com', 'g.whatsapp.net'];
+
+function tcpReachable(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host, port });
+    const done = (ok) => { sock.destroy(); resolve(ok); };
+    sock.setTimeout(timeoutMs, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+  });
+}
+
+function resolves(name, timeoutMs) {
+  return Promise.race([
+    dns.promises.lookup(name).then(() => true, () => false),
+    new Promise((r) => setTimeout(r, timeoutMs, false).unref?.()),
+  ]);
+}
+
+export async function machineOnline({ timeoutMs = 5_000 } = {}) {
+  const any = async (checks) => (await Promise.all(checks)).some(Boolean);
+  const [reach, names] = await Promise.all([
+    any(PROBE_ADDRESSES.map((a) => tcpReachable(a, 443, timeoutMs))),
+    any(PROBE_NAMES.map((n) => resolves(n, timeoutMs))),
+  ]);
+  return reach && names;
+}
+
 export class FailoverSupervisor {
-  constructor({ bot, configStore, queues = [], stateStore = null, audit = null, alerts = null } = {}) {
+  constructor({ bot, configStore, queues = [], stateStore = null, audit = null, alerts = null, online = machineOnline } = {}) {
     this.bot = bot;
     this.configStore = configStore;
     this.queues = queues.filter(Boolean);
@@ -101,6 +146,14 @@ export class FailoverSupervisor {
     // it is linking is not a spare yet: switching to it would put the bot's
     // socket on a session that is still being written.
     this.linker = null;
+    // Is the machine online at all (machineOnline; a stub in tests).
+    this.online = online;
+    // reconnectAttempts when the machine was last found offline: the
+    // threshold is counted again from there, so attempts made with no
+    // network do not count against the number once the network is back.
+    this._offlineBaseline = 0;
+    this._offlineSince = 0;
+    this._checkingNet = false;
     this._timer = null;
     this._onState = null;
   }
@@ -229,6 +282,11 @@ export class FailoverSupervisor {
     if (st.state === 'connected') {
       this.markHealthy(id);
       this._failedOverThisOutage = false;     // the outage is over
+      this._offlineBaseline = 0;
+      if (this._offlineSince) {
+        logger.info(`the machine is online again and "${id}" reconnected by itself - no switch was needed`);
+        this._offlineSince = 0;
+      }
       if (!this.activeSince) this.activeSince = Date.now();
       return;
     }
@@ -280,12 +338,41 @@ export class FailoverSupervisor {
     // code had even been drawn. Linking is not an outage.
     if (st.linking) return;
 
-    if (st.state === 'connecting' && (st.reconnectAttempts ?? 0) >= this.cfg.failAfterAttempts
-        && !this._failedOverThisOutage) {
-      this._failedOverThisOutage = true;
-      this.markFailed(id, `${st.reconnectAttempts} reconnect attempts failed`);
-      this.failover(`could not reconnect after ${st.reconnectAttempts} attempts`)
-        .catch((e) => logger.error(e.message));
+    const attempts = st.reconnectAttempts ?? 0;
+    // While the machine is known to be offline every attempt is checked, so
+    // the count starts again from the first one made with the network back.
+    if (st.state === 'connecting' && (this._offlineSince || attempts - this._offlineBaseline >= this.cfg.failAfterAttempts)
+        && !this._failedOverThisOutage && !this._checkingNet) {
+      // Not when the whole machine is offline: every number connects from
+      // here, so no spare would fare better (machineOnline, above).
+      this._checkingNet = true;
+      Promise.resolve()
+        .then(() => this.online())
+        .catch(() => false)
+        .then((up) => {
+          if (!up) {
+            this._offlineBaseline = attempts;
+            if (!this._offlineSince) {
+              this._offlineSince = Date.now();
+              logger.warn(`not switching numbers: this machine is offline (no internet), so a spare could not connect either. `
+                + `"${id}" keeps retrying and is not marked failed`);
+              this._record('failover held - machine offline', `${attempts} reconnect attempts on "${id}" while the machine had no internet`);
+            }
+            return;
+          }
+          if (this._failedOverThisOutage || this.bot.state === 'connected' || this.activeId() !== id) return;
+          if (this._offlineSince) {
+            this._offlineSince = 0;
+            this._offlineBaseline = attempts;
+            logger.info(`the machine is online again; "${id}" gets ${this.cfg.failAfterAttempts} more attempts before a switch`);
+            return;
+          }
+          this._failedOverThisOutage = true;
+          this.markFailed(id, `${attempts} reconnect attempts failed`);
+          this.failover(`could not reconnect after ${attempts} attempts`)
+            .catch((e) => logger.error(e.message));
+        })
+        .finally(() => { this._checkingNet = false; });
     }
   }
 
