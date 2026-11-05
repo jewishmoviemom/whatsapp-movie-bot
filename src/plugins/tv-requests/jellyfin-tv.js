@@ -698,6 +698,18 @@ export async function resolveEpisodes(parsed, opts = {}) {
     if (head && head !== show && head.length >= 3) series = await findSeries(head, withYear);
   }
   if (!series) return { error: 'not-found', series: null, episodes: [] };
+  // A year that does not fit the show found, while another show of the same
+  // title fits it: that one was meant. "avatar the last airbender 2005 season
+  // 1" was sent the 2024 live action - Jellyfin's search never returns the
+  // 2005 "Avatar: The Last Airbender" for its colon, so the year had nothing
+  // to choose between. Asked for "which one?" by year (need-year, below), a
+  // member has to be able to answer with it.
+  if (year && series.year && Math.abs(series.year - year) > 1 && !opts.knownSeries) {
+    try {
+      const fits = await findNamesakes(series, withYear);
+      if (fits.length) series = fits[0];
+    } catch { /* the show found stands */ }
+  }
   // A run of episodes ("S01E01-E05") is one request for exactly those, and a
   // list ("S01E06, E09") for exactly the episodes it names.
   const range = parsed.episodeRange ?? null;
@@ -837,6 +849,37 @@ export async function resolveEpisodes(parsed, opts = {}) {
   // Fill in the series name for filenames when Jellyfin omits it per-episode.
   episodes = episodes.map((e) => ({ ...e, series: e.series ?? series.name }));
   episodes.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+  // Two different shows of one title that both hold what was asked for, and
+  // nothing in the request to choose between them: ask, by year. "what if
+  // season 1" (a member, 2026-11-04 18:55Z and 11-05 00:01Z) meant the Marvel
+  // "What If...?" (2021) and was sent "WHAT / IF" (2019), a TV-MA drama:
+  // both are "what if" to the matcher, so whichever the server listed first
+  // won. The operator, 2026-11-05: "someone asked for show "what if...?" and
+  // bot pulled "what / if" completely different show". A year in the request
+  // decides it (yearFits), and so does a request typed with the title's own
+  // "...?" when only one title has them (bestMatch's markFit); a show the
+  // namesake check above moved to, the only one with that season, is never
+  // asked about.
+  if (!year && !opts.knownSeries) {
+    const marks = (t) => /\.{2,}|…|\?/.test(String(t ?? ''));
+    try {
+      const others = [];
+      for (const other of await findNamesakes(series, withYear)) {
+        if (marks(show) && marks(series.name) && !marks(other.name)) continue;
+        if (other.year && series.year && other.year === series.year) continue;
+        const theirs = await listEpisodes(other.id, { ...opts, season });
+        if (pick(theirs).length) others.push(other);
+      }
+      if (others.length) {
+        const choices = [series, ...others].sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
+        try {
+          opts.onDiagnostic?.(`"${show}" season ${season} is in ${choices.length} different shows of that title: `
+            + `${choices.map((c) => `"${c.name}" (${c.year ?? '?'})`).join(', ')} - asking which, by year`);
+        } catch { /* diagnostics never break a lookup */ }
+        return { error: 'need-year', series, season, episodes: [], choices };
+      }
+    } catch { /* the check is a guard, never a reason to fail */ }
+  }
   if (missing.length) return { error: null, series, season, episodes, missing, episodesInSeason: [...new Set(inSeason())].sort((a, b) => a - b) };
   return { error: null, series, season, episodes };
 }
@@ -1048,6 +1091,20 @@ export function regionVersionVariant(show) {
   return v && v !== s ? v : null;
 }
 
+/**
+ * A language note typed after the title: "Attack on Titan English season 4
+ * episodes 13 29 and 30" was answered "no series matching" (hourly check
+ * 20261104T160001Z) although "Attack on Titan" (2013) is on the server -
+ * "English" / "dubbed" / "English dub" asks for a language, it is not part of
+ * the name. Tried after the title as typed. Null when the title does not end
+ * that way or nothing else would remain.
+ */
+export function languageVariant(show) {
+  const s = String(show ?? '').trim();
+  const v = s.replace(/\s+(?:in\s+)?(?:english|eng)(?:\s+(?:dubbed|dub|subbed|sub|subtitles?|audio))?$|\s+(?:english\s+)?(?:dubbed|dub|subbed)$/i, '').trim();
+  return v && v !== s ? v : null;
+}
+
 /** Looks the show up as typed, then, only if that finds nothing, in its other spellings. */
 export async function findSeries(show, opts = {}) {
   const found = await findSeriesOnce(show, opts);
@@ -1062,7 +1119,7 @@ export async function findSeries(show, opts = {}) {
       return newest ?? base;
     }
   }
-  for (const alt of [spacedVariant(show), numberWordVariant(show), studioVariant(show), digitVariant(show), bracketVariant(show), apostropheVariant(show), pluralVariant(show), elisionVariant(show), compoundVariant(show), trailingSeasonVariant(show), fillerVariant(show), regionVersionVariant(show)]) {
+  for (const alt of [spacedVariant(show), numberWordVariant(show), studioVariant(show), digitVariant(show), bracketVariant(show), apostropheVariant(show), pluralVariant(show), elisionVariant(show), compoundVariant(show), trailingSeasonVariant(show), fillerVariant(show), regionVersionVariant(show), languageVariant(show)]) {
     if (!alt) continue;
     const again = await findSeriesOnce(alt, opts);
     if (again) return again;

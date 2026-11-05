@@ -52,8 +52,15 @@ ok(searched.includes('airbender'), 'the title\'s longest word is searched, since
 const e5 = await resolveEpisodes({ show: 'avatar the last airbender', season: 3, episode: 2 }, opts);
 ok(!e5.error && e5.series.id === 'toon' && e5.episodes[0].id === 'toon-3-2', `an episode of season 3 too (${who(e5)})`);
 
+// Both shows have a season 1, and nothing in the request chooses: since
+// 2026-11-05 ("what if season 1" was sent WHAT / IF for the Marvel What
+// If...?) the member is asked which, by year, rather than sent the first one.
 const s1 = await resolveEpisodes({ show: 'avatar the last airbender', season: 1 }, opts);
-ok(!s1.error && s1.series.id === 'live', `a season the picked show has is not taken from the other (${who(s1)})`);
+ok(s1.error === 'need-year' && s1.choices.map((c) => c.id).join() === 'toon,live', `a season both have is asked about, oldest first (${who(s1)})`);
+const s1y = await resolveEpisodes({ show: 'avatar the last airbender 2024', season: 1 }, opts);
+ok(!s1y.error && s1y.series.id === 'live', `with the year, that one is sent (${who(s1y)})`);
+const s1t = await resolveEpisodes({ show: 'avatar the last airbender 2005', season: 1 }, opts);
+ok(!s1t.error && s1t.series.id === 'toon', `and the other year the other (${who(s1t)})`);
 
 const y = await resolveEpisodes({ show: 'avatar the last airbender 2024', season: 3 }, opts);
 ok(y.error === 'empty-season' && y.series.id === 'live', `a year the other show does not fit keeps the answer "no season 3" (${who(y)})`);

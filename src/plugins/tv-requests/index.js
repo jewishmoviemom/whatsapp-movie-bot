@@ -4,7 +4,7 @@ import { heldMessage } from '../../core/request-pause.js';
 import { MemberCooldown, COOLDOWN_LIMITS, cooldownKeys, sweepCooldownKeys, insideCooldown } from '../../core/request-cooldown.js';
 import fs from 'node:fs';
 import {
-  parseTvRequest, describeRequest, isSingleEpisode, pad, rangeCode, listCode, seasonList, seasonSpans, runsOf, numbersOfRuns, codeLeftIn,
+  parseTvRequest, describeRequest, isSingleEpisode, pad, rangeCode, listCode, seasonList, seasonSpans, runsOf, numbersOfRuns, codeLeftIn, stripTrailingYear,
 } from './parse.js';
 import { episodeFileName, episodeLabel, episodeOrder } from './naming.js';
 import { resolveEpisodes, episodeDownloadUrl } from './jellyfin-tv.js';
@@ -689,7 +689,7 @@ export default {
     // request or the flood backstop is running - but there, refusing the
     // answer left them unable to give it. One answer, naming a season of the
     // same show, for as long as either could refuse it.
-    if (lookup && out?.outcome === 'need-season' && (out.series || out.name)) {
+    if (lookup && (out?.outcome === 'need-season' || out?.outcome === 'need-year') && (out.series || out.name)) {
       const lasts = Math.max(cooldown, this._cool().limits.floodWindowMs);
       ctx.store.set(passKey, { series: out.series ?? null, name: out.name ?? null, until: Date.now() + lasts });
     }
@@ -755,8 +755,43 @@ export default {
    * for? By id, or by name: a season held only in the show's other entry
    * (resolveEpisodes' twins) comes back under that entry's id.
    */
+  /**
+   * Two different shows of the title asked for both hold the season, and the
+   * request named no year (resolveEpisodes' 'need-year'): ask which, by year,
+   * rather than send whichever the server listed first. "what if season 1"
+   * was sent "WHAT / IF" (2019, TV-MA) twice when the Marvel "What If...?"
+   * (2021) was meant (2026-11-04 and 11-05). The question is answered like
+   * "which season?": 📺, a reply on the request, a line in the notifications
+   * group, and one answer let through the cooldown for any of the shows.
+   */
+  async _askWhichShow(ctx, { msg, parsed, found, route, react }) {
+    const cfg = ctx.config.tvRequests ?? {};
+    const R = this._react(ctx);
+    await react(R.needSeason ?? R.needYear);
+    const choices = found.choices ?? [];
+    const what = parsed.episodeRange ? rangeCode(found.season, parsed.episodeRange.from, parsed.episodeRange.to)
+      : parsed.episodeList?.length ? listCode(found.season, parsed.episodeList)
+        : parsed.episode != null ? `S${pad(found.season)}E${pad(parsed.episode)}`
+          : `season ${found.season}`;
+    const lines = choices.map((c) => `• *${c.name}*${c.year ? ` (${c.year})` : ''}`);
+    // The newest in the example, the one usually meant (the Marvel What
+    // If...?, the US Office); the list is oldest first.
+    const example = [...choices].reverse().find((c) => c.year) ?? choices[choices.length - 1];
+    const ask = `📺 There are ${choices.length} different shows called that — which one did you mean?\n`
+      + `${lines.join('\n')}\n\nSend it again with the year, e.g. `
+      + `*${suggestPrefix(route, cfg.prefix ?? '#request')} ${example.name}${example.year ? ` ${example.year}` : ''} ${what}*`;
+    ctx.log.info(`TV: "${parsed.show}" ${what} is in ${choices.length} shows of that title - asked which: `
+      + choices.map((c) => `${c.name} (${c.year ?? '?'})`).join(', '));
+    try { if (msg) await ctx.bot.sendText(msg.chatJid, ask, { quoted: msg }); }
+    catch (err) { ctx.log.debug(`could not ask which show: ${err.message}`); }
+    this._notify(ctx, `📺 ${parsed.show} — asked which show (${choices.map((c) => c.year ?? '?').join(' or ')})`, msg, { route });
+    return { outcome: 'need-year', series: choices.map((c) => c.id), name: null };
+  },
+
   _passFits(series, pass) {
     if (!series || !pass) return false;
+    // "Which one?" passes every show it offered (_askWhichShow).
+    if (Array.isArray(pass.series)) return pass.series.map(String).includes(String(series.id));
     if (pass.series != null && String(series.id) === String(pass.series)) return true;
     const norm = (v) => String(v ?? '').trim().toLowerCase();
     return !!pass.name && norm(series.name) === norm(pass.name);
@@ -926,6 +961,19 @@ export default {
     const series = probe.series;
     const held = new Set(probe.seasons ?? []);
     const name = series?.name ?? parsed.show;
+    // Two shows of the title that both hold a season asked for, and no year:
+    // ask which, as one season would (_askWhichShow). The seasons below are
+    // looked up as the show the probe picked (knownSeries), which would
+    // otherwise take whichever the server listed first.
+    const firstHeld = parsed.seasons.find((s) => held.has(s));
+    if (firstHeld != null && !stripTrailingYear(parsed.show).year) {
+      try {
+        const which = await resolveEpisodes({ show: parsed.show, season: firstHeld, episode: null }, opts);
+        if (which.error === 'need-year') {
+          return this._askWhichShow(ctx, { msg, parsed: { ...parsed, seasons: undefined, season: firstHeld }, found: which, route, react });
+        }
+      } catch { /* the lookup below says what is wrong */ }
+    }
 
     const share = shareMessage({
       send: react,
@@ -1447,6 +1495,7 @@ export default {
       await this._notInLibrary(ctx, { msg, text, parsed, found, route, react, diagnostics });
       return { outcome: 'missing' };
     }
+    if (found.error === 'need-year') return this._askWhichShow(ctx, { msg, parsed, found, route, react });
     if (found.error === 'need-season') {
       // Never dump a whole series into the group - ask which season. The reply
       // goes into the REQUEST GROUP: sending it only to the notifications
@@ -2153,6 +2202,10 @@ export default {
         : `${found.series.name} has no S${String(found.season).padStart(2, '0')}E${String(parsed.episode).padStart(2, '0')}`);
     }
     if (found.error === 'empty-season') throw new Error(`${found.series.name} season ${found.season} has no episodes in the library`);
+    if (found.error === 'need-year') {
+      throw new Error(`${found.choices.length} different shows are called that: `
+        + `${found.choices.map((c) => `${c.name} (${c.year ?? '?'})`).join(', ')} - add the year, e.g. "${parsed.show} ${found.choices[found.choices.length - 1].year ?? ''} season ${found.season}"`);
+    }
     if (found.error === 'need-season') {
       const list = (found.seasons ?? []).join(', ');
       throw new Error(`Which season of ${found.series.name}? Available: ${list || 'unknown'}`);

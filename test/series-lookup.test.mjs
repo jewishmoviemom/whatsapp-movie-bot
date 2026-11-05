@@ -441,7 +441,11 @@ console.log('=== a season the picked entry has is used as it is ===');
   const r = await resolveEpisodes({ show: 'Big Brother', season: 3, episode: null }, { ...OPTS, fetchImpl });
   ok(r.series.id === 'main' && r.episodes.length === 10 && r.episodes.every((e) => e.id.startsWith('main-')),
     `the picked entry's own 10 episodes, nothing from the other (${r.series.id}, ${r.episodes.length})`);
-  ok(seen.filter((u) => u.startsWith('/Items')).length === 1, 'and no twin search was made for it');
+  // One search finds the show. The Limit=50 search since 2026-11-05 looks
+  // for a different show of the same title (findNamesakes, for
+  // resolveEpisodes' 'need-year'), asked of every request with no year; it
+  // is not a twin search.
+  ok(seen.filter((u) => u.startsWith('/Items') && !/Limit=50/.test(u)).length === 1, 'and no twin search was made for it');
 }
 
 console.log('=== "what we have" never offers an empty season folder ===');

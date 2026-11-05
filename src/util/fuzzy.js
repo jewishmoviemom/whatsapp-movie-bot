@@ -471,6 +471,19 @@ export function whyOtherFilm(wanted, found, { typedYear = null, typed = null } =
  * Pick the best candidate above `threshold`.
  * `getTitle`/`getYear` let this work over any shape of object.
  */
+/**
+ * Does a title carry the same "..." / "?" marks as the request? normalizeTitle
+ * drops them, so "What If...?" (Marvel, 2021) and "WHAT / IF" (Netflix, 2019)
+ * are both "what if" and tie at 1.0, and the first one listed won: a member
+ * typed "what if...? season 01" (2026-11-05 06:09Z) after Head Admin told him
+ * that is how to ask for the Marvel one, and was sent WHAT / IF again. Only a
+ * tie-breaker: it never lifts a worse match over a better one.
+ */
+const markFit = (query, title) => {
+  const marks = (t) => /\.{2,}|\u2026|\?/.test(String(t ?? ''));
+  return marks(query) === marks(title) ? 1 : 0;
+};
+
 export function bestMatch(query, candidates, { threshold = 0.72, year = null, getTitle = (c) => c.title, getYear = (c) => c.year } = {}) {
   let best = null;
   for (const c of candidates) {
@@ -484,7 +497,10 @@ export function bestMatch(query, candidates, { threshold = 0.72, year = null, ge
     // Year agreement is a tiebreaker, not extra credit beyond a perfect
     // match - scores above 1.0 are meaningless and read as "108%" in the UI.
     score = Math.max(0, Math.min(1, score));
-    if (!best || score > best.score) best = { item: c, score };
+    if (!best || score > best.score
+      || (score === best.score && markFit(query, getTitle(c)) > markFit(query, getTitle(best.item)))) {
+      best = { item: c, score };
+    }
   }
   return best && best.score >= threshold ? best : null;
 }

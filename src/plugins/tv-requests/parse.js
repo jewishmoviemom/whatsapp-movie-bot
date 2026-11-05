@@ -434,7 +434,10 @@ function seasonWordToDigit(text) {
   return text
     .replace(SESSION_TYPO, (m, before, after) => `${before}season${after}`)
     .replace(new RegExp(String.raw`\b(seasons?|series)\s+(${NUM_WORD})\b`, 'gi'), (m, w, n) => `${w} ${SEASON_WORDS[n.toLowerCase()]}`)
-    .replace(new RegExp(String.raw`\b(${NUM_WORD})\s+(season|series)\b`, 'gi'), (m, n, w) => `${w} ${SEASON_WORDS[n.toLowerCase()]}`);
+    // Not after a hyphen, nor before a digit: "Brooklyn Nine-Nine season 1"
+    // (Max Neuman, 2026-11-04) became "Nine-season 9 1" and was answered
+    // "has no season 9".
+    .replace(new RegExp(String.raw`(?<![-\w])(${NUM_WORD})\s+(season|series)\b(?!\s*\d)`, 'gi'), (m, n, w) => `${w} ${SEASON_WORDS[n.toLowerCase()]}`);
 }
 
 /**

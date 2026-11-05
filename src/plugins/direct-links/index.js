@@ -175,6 +175,14 @@ export default {
     if (found.error === 'no-such-episode' && many) return reply(`📬 ${many} of *${found.series.name}* aren't on the server.`);
     if (found.error === 'no-such-episode') return reply(`📬 That episode of *${found.series.name}* isn't on the server.`);
     if (found.error === 'empty-season') return reply(`📬 *${found.series.name}* season ${found.season} has no episodes on the server.`);
+    // Two shows of the title both have it, and no year was given
+    // (resolveEpisodes' 'need-year', "what if" for "What If...?", 2026-11-05).
+    if (found.error === 'need-year') {
+      const pick = [...found.choices].reverse().find((c) => c.year) ?? found.choices[found.choices.length - 1];
+      return reply(`📺 There are ${found.choices.length} different shows called that — which one?\n`
+        + found.choices.map((c) => `• *${c.name}*${c.year ? ` (${c.year})` : ''}`).join('\n')
+        + `\n\ne.g. *${cfg.tvCommand || '#request-tv'} ${pick.name}${pick.year ? ` ${pick.year}` : ''} S${String(found.season).padStart(2, '0')}*`);
+    }
     if (found.error === 'need-season') {
       const list = (found.seasons ?? []).join(', ');
       return reply(`📺 Which season of *${found.series.name}*?${list ? `\nAvailable: ${list}` : ''}\n\ne.g. *${cfg.tvCommand || '#request-tv'} ${found.series.name} S${String(found.seasons?.[0] ?? 1).padStart(2, '0')}*`);
