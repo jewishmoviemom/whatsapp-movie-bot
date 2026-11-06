@@ -333,7 +333,7 @@ async function loadConfig() {
   // Every box is about to show what is saved, so nothing on it is an edit.
   FORM_EDITED.clear();
   fillForm(CONFIG);
-  renderReactionGuide(CONFIG.movieRequests?.reactions);
+  renderReactionGuide(CONFIG.movieRequests?.reactions, CONFIG.tvRequests?.reactions);
 }
 
 function fillForm(c) {
@@ -387,6 +387,11 @@ function fillForm(c) {
   $('r-duplicate').value = r.duplicate ?? '';
   $('r-done').value = r.done ?? '';
   $('r-failed').value = r.failed ?? '';
+  $('r-oneatatime').value = r.oneAtATime ?? '';
+  $('r-toofast').value = r.tooFast ?? '';
+  $('r-cancelled').value = r.cancelled ?? '';
+  $('r-paused').value = r.paused ?? '';
+  $('r-needseason').value = c.tvRequests?.reactions?.needSeason ?? '';
 
   const th = mr.theatrical ?? {};
   $('f-th-enabled').checked = !!th.enabled;
@@ -509,6 +514,8 @@ function collectForm() {
         writtenWrong: $('r-writtenwrong').value,
         needYear: $('r-needyear').value, duplicate: $('r-duplicate').value,
         skipped: $('r-skipped').value, failed: $('r-failed').value,
+        oneAtATime: $('r-oneatatime').value, tooFast: $('r-toofast').value,
+        cancelled: $('r-cancelled').value, paused: $('r-paused').value,
       },
       theatrical: {
         // tmdbApiKey is NOT written here, and neither are omdb.apiKey,
@@ -575,6 +582,8 @@ function collectForm() {
       dailySummaryHour: +$('f-em-dailyhour').value,
       errorThrottleMinutes: +$('f-em-throttle').value,
     },
+    // TV's own reaction; its other settings are saved by the TV card's button.
+    tvRequests: { reactions: { needSeason: $('r-needseason').value } },
     plugins: { enabled: lines($('f-plugins').value) },
   };
 }
@@ -631,6 +640,10 @@ const FORM_FIELDS = {
   'r-writtenwrong': 'movieRequests.reactions.writtenWrong',
   'r-needyear': 'movieRequests.reactions.needYear', 'r-duplicate': 'movieRequests.reactions.duplicate',
   'r-skipped': 'movieRequests.reactions.skipped', 'r-failed': 'movieRequests.reactions.failed',
+  'r-oneatatime': 'movieRequests.reactions.oneAtATime', 'r-toofast': 'movieRequests.reactions.tooFast',
+  'r-cancelled': 'movieRequests.reactions.cancelled', 'r-paused': 'movieRequests.reactions.paused',
+  // TV keeps its own "which season?" reaction; every other TV reaction is the movie one.
+  'r-needseason': 'tvRequests.reactions.needSeason',
   'f-th-enabled': 'movieRequests.theatrical.enabled', 'f-th-usedvd': 'movieRequests.theatrical.useHomeReleaseDate',
   'f-th-window': 'movieRequests.theatrical.windowDays',
   'f-gemini-on': 'gemini.enabled', 'f-gemini-conf': 'gemini.minConfidence', 'f-gemini-content': 'gemini.contentCheck',
@@ -1276,10 +1289,11 @@ function renderActiveJob(job, q) {
     </div>`;
 }
 
-function renderReactionGuide(reactions) {
+function renderReactionGuide(reactions, tvReactions) {
   const box = $('reaction-guide');
   if (!box || !reactions) return;
   const r = reactions;
+  const tv = tvReactions || {};
   const pos = (r.positions && r.positions.length) ? r.positions.slice(0, 3).join(' ') + ' …' : '1\u20e3 2\u20e3 3\u20e3';
 
   const row = (emoji, label) => `<div class="rg-row"><span class="rg-emoji">${esc(emoji || '\u2022')}</span><span class="rg-label">${esc(label)}</span></div>`;
@@ -1296,15 +1310,19 @@ function renderReactionGuide(reactions) {
     ${row(r.done, 'Done — posted!')}
     <div class="rg-sec">If we can't fulfil it:</div>
     ${row(r.rated, 'Rated R / NC-17 / etc — not allowed')}
+    ${row(r.nudity || '\u{1f51e}', 'Rated, and the check found nudity in it — not allowed')}
     ${row(r.theaters, 'Still in theaters — not on the server yet')}
     ${row(r.notInLibrary, "Not in the library — we don't have it")}
     ${row(r.notFound, 'Not found — check the spelling')}
     ${row(r.writtenWrong || '\u270d\ufe0f', 'Not written properly — write the season and episode like S01E05')}
     ${row(r.needYear, 'Which year? — add a year (e.g. Dune 2021)')}
     ${row(r.oneAtATime || '\u261d\ufe0f', 'One movie per request — send each in a message of its own')}
+    ${row(tv.needSeason || r.needYear, 'TV: which season, or which of the shows with that name? — send it again with the season or year')}
+    ${row(r.tooFast || '\u{1f6ab}', 'Too many requests too fast — wait, then send it again')}
     <div class="rg-sec">Occasional:</div>
     ${row(r.failed, 'Something went wrong (usually retries)')}
     ${row(r.skipped, 'An admin skipped it (huge file)')}
+    ${row(r.cancelled || '\u274c', 'An admin cancelled it — it is not coming')}
     ${row(r.paused || '\u23f8\ufe0f', 'On hold — requests are paused for a moment; it runs by itself, in order, when they resume')}`;
 }
 

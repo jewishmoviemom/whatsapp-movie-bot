@@ -951,6 +951,25 @@ export function digitVariant(show) {
 }
 
 /**
+ * A leading ordinal typed as a word where the library uses the digit:
+ * "seventh heavens season 2" was answered "no series matching" although
+ * "7th Heaven" (1996) is on the server (hourly check 20261105T210001Z) - the
+ * search cannot link "seventh" to "7th". With `singular`, a trailing "s" on
+ * the last word is dropped too ("heavens" -> "heaven"). Null when the title
+ * has no leading ordinal word (first..tenth) followed by more title.
+ */
+export function ordinalVariant(show, { singular = false } = {}) {
+  const nth = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+  const suffix = ['st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th', 'th'];
+  const s = String(show ?? '').trim();
+  let v = s.replace(/^(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+(?=\S)/i,
+    (_, w) => { const i = nth.indexOf(w.toLowerCase()); return `${i + 1}${suffix[i]} `; });
+  if (v === s) return null;
+  if (singular) v = v.replace(/(\p{L}{3,})s$/iu, '$1');
+  return v;
+}
+
+/**
  * A language or edition note typed in brackets after the title: "friren:
  * beyond journey's end (In English) s1" was answered "no series matching"
  * (hourly check 20261018T050001Z) - the bracket defeats the search and drags
@@ -1046,6 +1065,31 @@ export function trailingSeasonVariant(show) {
 }
 
 /**
+ * A one-word title typed as two: "bay watch s01 episodes 1-10" was answered
+ * "no series matching" although "Baywatch" (1989) is on the server (hourly
+ * check 20261106T160001Z) - the reverse of "Labrats" for "Lab Rats". Only a
+ * title of two or three short words is joined, and findSeriesOnce still has to
+ * match the joined word, so it cannot invent a show. Null otherwise.
+ */
+export function joinedWordsVariant(show) {
+  const s = String(show ?? '').trim();
+  if (!/^\p{L}{2,8}(?:\s+\p{L}{2,8}){1,2}$/u.test(s)) return null;
+  return s.replace(/\s+/g, '');
+}
+
+/**
+ * A bare season number left on the name: "Off campus 1" was answered "no series
+ * matching" although "Off Campus" (2026) is on the server (hourly check
+ * 20261106T060001Z). The parser keeps a bare trailing number as part of the
+ * name (a show may be called "Catch 22"), so this is tried only after the name
+ * as typed found nothing. One or two digits; a year is stripped elsewhere.
+ */
+export function trailingNumberVariant(show) {
+  const v = String(show ?? '').trim().replace(/\s+\d{1,2}$/, '').trim();
+  return v && v !== String(show).trim() ? v : null;
+}
+
+/**
  * Filler around the title: "all Ted episodes" was answered "no series matching"
  * although "ted" (2024) is on the server (hourly check 20261025T130001Z) - the
  * words that say how much is wanted stayed on the name. Drops a leading "all
@@ -1106,6 +1150,37 @@ export function languageVariant(show) {
 }
 
 /** Looks the show up as typed, then, only if that finds nothing, in its other spellings. */
+/**
+ * A one-word title that is really two: "Labrats s2 episodes 01-08" was
+ * answered "no series matching" although "Lab Rats" (2012) is on the server
+ * (hourly check 20261106T030002Z). No dictionary here, so every split into two
+ * parts of 3+ letters is searched (one cheap query each, never the whole
+ * library listing) and kept only when the library's own answer is that exact
+ * spaced title. Returns the series or null.
+ */
+export async function findSplitWord(show, { base, token, userId, fetchImpl = fetch, bestMatch, year = null } = {}) {
+  const s = String(show ?? '').trim();
+  if (!/^\p{L}{6,20}$/u.test(s)) return null;
+  const headers = { 'X-Emby-Token': token, Accept: 'application/json' };
+  for (let i = 3; i <= s.length - 3; i++) {
+    const spaced = `${s.slice(0, i)} ${s.slice(i)}`;
+    try {
+      const url = new URL(`${base}/Items`);
+      url.searchParams.set('searchTerm', spaced);
+      url.searchParams.set('IncludeItemTypes', 'Series');
+      url.searchParams.set('Recursive', 'true');
+      url.searchParams.set('Limit', '25');
+      url.searchParams.set('Fields', SERIES_FIELDS);
+      if (userId) url.searchParams.set('UserId', userId);
+      const r = await getJson(fetchImpl, url.toString(), headers);
+      const items = (r.Items ?? []).filter((it) => namesOf(it).some((n) => String(n).toLowerCase().trim() === spaced.toLowerCase()));
+      const hit = matchLocally(spaced, items, bestMatch, year);
+      if (hit) return shape(hit.item, hit.score, 'split');
+    } catch { /* a failed guess is just a miss */ }
+  }
+  return null;
+}
+
 export async function findSeries(show, opts = {}) {
   const found = await findSeriesOnce(show, opts);
   if (found) return found;
@@ -1119,7 +1194,7 @@ export async function findSeries(show, opts = {}) {
       return newest ?? base;
     }
   }
-  for (const alt of [spacedVariant(show), numberWordVariant(show), studioVariant(show), digitVariant(show), bracketVariant(show), apostropheVariant(show), pluralVariant(show), elisionVariant(show), compoundVariant(show), trailingSeasonVariant(show), fillerVariant(show), regionVersionVariant(show), languageVariant(show)]) {
+  for (const alt of [spacedVariant(show), numberWordVariant(show), studioVariant(show), digitVariant(show), ordinalVariant(show), ordinalVariant(show, { singular: true }), bracketVariant(show), apostropheVariant(show), pluralVariant(show), elisionVariant(show), compoundVariant(show), trailingSeasonVariant(show), trailingNumberVariant(show), joinedWordsVariant(show), fillerVariant(show), regionVersionVariant(show), languageVariant(show)]) {
     if (!alt) continue;
     const again = await findSeriesOnce(alt, opts);
     if (again) return again;
@@ -1128,5 +1203,5 @@ export async function findSeries(show, opts = {}) {
     const again = await findSeriesOnce(alt, opts);
     if (again) return again;
   }
-  return null;
+  return findSplitWord(show, opts);
 }

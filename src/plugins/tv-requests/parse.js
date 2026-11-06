@@ -462,7 +462,7 @@ export function parseTvRequest(text) {
   // requests) matched none of the one-or-two-digit season patterns, so the
   // code stayed in the show's name and the library answered "no series
   // matching". A leading zero carries no meaning; drop it.
-  const raw = spaceGluedWords(seasonWordToDigit(String(text ?? '').trim()))
+  const raw = episodesLastFor(spaceGluedWords(seasonWordToDigit(String(text ?? '').trim())))
     .replace(/\bs0(\d{2})(?!\d)/gi, 's$1');
   if (!raw) return { show: '', season: null, episode: null, raw, matched: null };
 
@@ -536,6 +536,20 @@ export function parseTvRequest(text) {
   }
 
   return { show: clean(raw), season: null, episode: null, raw, matched: null };
+}
+
+/**
+ * "episodes 11-12 Ted lasso season 3" (Avi Sternbuch, 2026-11-06 12:09 UTC) was
+ * searched whole as a show name and answered "not in the library"; every
+ * pattern here expects the episodes after the show. Episodes named first are
+ * moved to the end ("Ted lasso season 3 episodes 11-12"). Only a plain number
+ * list or run is moved, and only when a show is left, so "Episodes" the show
+ * is untouched.
+ */
+function episodesLastFor(text) {
+  const m = text.match(/^((?:episodes?|eps?)\s*\d{1,3}(?:\s*(?:-|–|to|,|&|\+|and)\s*\d{1,3})*)\s+(?=\D*[a-z])(.+)$/i);
+  if (!m || !m[2].trim()) return text;
+  return `${m[2].trim()} ${m[1]}`;
 }
 
 /**
