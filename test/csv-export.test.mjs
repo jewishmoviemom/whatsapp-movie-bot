@@ -1511,7 +1511,7 @@ console.log('=== the files carry personal data, and the README says so ===');
   // stay in (the queue test above checks one); what has to stay true is the
   // warning that goes with them.
   const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const note = readme.slice(readme.indexOf('**↓ CSV**'), readme.indexOf('**Do not port-forward'));
+  const note = readme.slice(readme.indexOf('**↓ Export**'), readme.indexOf('**Do not port-forward'));
   ok(note.length > 0 && /personal data/i.test(note), 'the README\'s note on the CSV files says they contain personal data');
   ok(/phone numbers/i.test(note) && /names/i.test(note), 'names and phone numbers, in so many words');
   ok(/on purpose|deliberately/i.test(note), 'and that they are kept on purpose');

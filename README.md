@@ -739,7 +739,8 @@ live WhatsApp session that can read and send as your number.
   password: a key box is written as the same `••••••••` the panel shows,
   whether the key is saved or only typed, and a key inside a pasted link or a
   log line is masked too.
-- **The exports contain personal data** — CSV, JSON and copied text alike; mind where you paste. A file holds what its card shows,
+- **The CSV and JSON files contain personal data.** Copied text leaves phone
+  numbers and WhatsApp ids out, but still names people; mind where you paste. A file holds what its card shows,
   and many cards show people: the queue, Now running and the history carry
   the names and phone numbers of the people who asked; the member list, a
   member's page, a group's members, group activity and the banned list carry
