@@ -39,9 +39,8 @@
    opens a small menu - CSV file, JSON file, Copy as text - and all three are
    made from the same table, so one card gives the same rows, the same
    secret masking and the same names and numbers whichever is picked. The
-   text is laid out for WhatsApp: the card's name in *bold*, then one line
-   per row for a two-column table, or a numbered block per row with a
-   "Column: value" line for each field that is filled in. */
+   text is laid out for WhatsApp: the card's name in *bold*, each section's
+   heading once, then one line per row (toChatText). */
 (() => {
   'use strict';
 
@@ -219,28 +218,76 @@
     return scrubSecrets(String(v)).replace(/\s+/g, ' ').trim();
   }
 
+  // A column whose value names the row, for the bold lead of a chat line.
+  const LEAD_COLUMN = /^(title|name|item|setting|film|show|member|group|reaction)$/i;
+
   /**
-   * Text to paste into a chat, WhatsApp's formatting: the section in *bold*
-   * with the row count and time, then a line per row when a row is a name
-   * and a value, or else a numbered block per row - its first field in bold,
-   * then each other field that is filled in as "Column: value".
+   * Text to paste into a chat, in WhatsApp's formatting. First drafted as a
+   * numbered block per row with a "Column: value" line for every field, which
+   * on the reactions card ran to 22 blocks, each repeating its section's
+   * heading - the operator, 2026-11-08: "This is horrible lol". Now:
+   *
+   * - the card's name in *bold* and the time, once;
+   * - when the first column only groups the rows (a "Part" the generic
+   *   reader fills with the card's sub-headings), each group's name is a
+   *   bold heading once, and the column is not repeated on its rows;
+   * - then one line per row. A name and a value is "name: value", or
+   *   "🔍 Researching" when the name is an emoji or a number; a wider row is
+   *   its title in bold followed by "Column: value" for the rest, on the
+   *   same line. Blank fields, and counts of 0, are left out.
+   * - phone numbers and ids are left out, and the queue and history keep
+   *   only the fields worth sharing (`chat` from the exporter).
    */
-  function toChatText(columns, rows, { section = '', note = '', now = new Date() } = {}) {
-    const head = `*${section || 'Export'}* — ${rows.length} row${rows.length === 1 ? '' : 's'} · ${csvWhen(now)}`;
-    const out = [head];
+  function toChatText(columns, rows, { section = '', note = '', now = new Date(), chat = null } = {}) {
+    const out = [`*${section || 'Export'}* · ${csvWhen(now)}`];
     if (note) out.push(`_${note}_`);
-    out.push('');
-    const cells = rows.map((r) => columns.map((c, i) => chatCell(r[i])));
-    if (columns.length <= 2) {
-      for (const r of cells) out.push(`• ${r.filter(Boolean).join(': ')}`);
+    // Which columns a chat gets: the exporter's own short list, in its order,
+    // when it gives one (the queue's 22 columns made a line of 300
+    // characters); otherwise every column but phone numbers and WhatsApp
+    // ids, which a file is for and a group chat is not - unless they are all
+    // the table has, as on the banned list.
+    let keep = columns.map((c, i) => i);
+    if (Array.isArray(chat) && chat.length) {
+      const picked = chat.map((c) => columns.indexOf(c)).filter((i) => i >= 0);
+      if (picked.length) keep = picked;
     } else {
-      cells.forEach((r, n) => {
-        const first = r.findIndex(Boolean);
-        out.push(`${n + 1}. *${first < 0 ? '(blank)' : r[first]}*`);
-        r.forEach((v, i) => { if (v && i !== first) out.push(`   ${columns[i]}: ${v}`); });
-        if (n < cells.length - 1) out.push('');
-      });
+      const notIds = keep.filter((i) => !/\b(number|id|jid)\b/i.test(String(columns[i])));
+      if (notIds.length) keep = notIds;
     }
+    let cells = rows.map((r) => keep.map((i) => chatCell(r[i])));
+    let cols = keep.map((i) => columns[i]);
+
+    // Grouped by the first column: every row has one, and the rows run in
+    // at most half as many groups as there are rows.
+    let groups = null;
+    if (cols.length >= 3 && cells.length > 1 && cells.every((r) => r[0])) {
+      const runs = cells.filter((r, n) => n === 0 || r[0] !== cells[n - 1][0]).length;
+      if (runs * 2 <= cells.length) {
+        groups = cells.map((r) => r[0].replace(/[\s:：]+$/, ''));
+        cells = cells.map((r) => r.slice(1));
+        cols = cols.slice(1);
+      }
+    }
+
+    const lead = Math.max(0, cols.findIndex((c) => LEAD_COLUMN.test(String(c))));
+    const line = (r) => {
+      const name = r[lead];
+      const rest = r.map((v, i) => [cols[i], v]).filter(([, v], i) => i !== lead && v && v !== '0');
+      if (cols.length === 2) {
+        const value = rest[0]?.[1] ?? '';
+        if (!name) return `• ${value}`;
+        if (!value) return `• ${name}`;
+        return /[A-Za-z]/.test(name) ? `• ${name}: ${value}` : `${name} ${value}`;
+      }
+      const tail = rest.map(([c, v]) => `${c}: ${v}`).join(' · ');
+      return `• ${name ? `*${name}*` : ''}${name && tail ? ' — ' : ''}${tail}`;
+    };
+
+    cells.forEach((r, n) => {
+      if (groups && (n === 0 || groups[n] !== groups[n - 1])) out.push('', `*${groups[n]}*`);
+      else if (n === 0) out.push('');
+      out.push(line(r));
+    });
     return `${out.join('\n').trimEnd()}\n`;
   }
 
@@ -654,6 +701,8 @@
   const JOB_COLUMNS = ['Place', 'Status', 'Kind', 'Title', 'Series', 'Season', 'Episodes', 'Done', 'Running', 'Waiting',
     'Failed', 'Skipped or cancelled', 'Current episode', 'Stage', 'Progress %', 'Requester', 'Requester number',
     'Detail', 'Added', 'Started', 'Finished', 'Error'];
+  // The fields a queue line keeps when it is copied for a chat (toChatText).
+  const JOB_CHAT = ['Title', 'Place', 'Status', 'Stage', 'Done', 'Episodes', 'Requester', 'Error'];
 
   /*
    * One row per request, which is what the queue sends. Asked for on
@@ -801,18 +850,19 @@
   async function exportQueue() {
     const { q, note } = await freshQueue();
     const { running, retrying, waiting, finished } = queueRows(q);
-    return { columns: JOB_COLUMNS, rows: [...running, ...retrying, ...waiting, ...finished], note };
+    return { columns: JOB_COLUMNS, rows: [...running, ...retrying, ...waiting, ...finished], note, chat: JOB_CHAT };
   }
 
   async function exportNowRunning() {
     const { q, note } = await freshQueue();
-    return { columns: JOB_COLUMNS, rows: queueRows(q).running, note };
+    return { columns: JOB_COLUMNS, rows: queueRows(q).running, note, chat: JOB_CHAT };
   }
 
   const HISTORY_COLUMNS = ['Time', 'Requested', 'Kind', 'Title', 'Year', 'Season', 'Episodes', 'Status',
     'Asked as', 'Looked up as', 'Requester', 'Requester number', 'Rating', 'Detail',
     'Nudity check', 'Checked by', 'Check note', 'Not checked because',
     'Queued (s)', 'Download (s)', 'Convert (s)', 'Send (s)', 'Work (s)', 'Request to done (s)', 'Beta'];
+  const HISTORY_CHAT = ['Title', 'Season', 'Status', 'Requester', 'Time'];
 
   function historyCsvRow(x) {
     const cc = x.contentCheck ?? {};
@@ -838,7 +888,7 @@
   async function exportHistory() {
     const loaded = [...(HISTORY.movies ?? []), ...(HISTORY.tv ?? [])].sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
     const { data, note } = await fetchOr('/history', loaded);
-    return { columns: HISTORY_COLUMNS, rows: (Array.isArray(data) ? data : loaded).map(historyCsvRow), note };
+    return { columns: HISTORY_COLUMNS, rows: (Array.isArray(data) ? data : loaded).map(historyCsvRow), note, chat: HISTORY_CHAT };
   }
 
   const LOG_COLUMNS = ['Time', 'Level', 'Scope', 'Message'];
@@ -1330,7 +1380,7 @@
   async function exportFor(card, format = 'csv', now = new Date()) {
     if (format === 'csv') return csvFor(card, now);
     const t = await tableFor(card);
-    const meta = { section: cardTitle(card) || t.slug, note: t.note, now };
+    const meta = { section: cardTitle(card) || t.slug, note: t.note, now, chat: t.chat };
     if (format === 'json') return { ...t, filename: csvFilename(t.slug, now, 'json'), text: toJson(t.columns, t.rows, meta) };
     return { ...t, filename: '', text: toChatText(t.columns, t.rows, meta) };
   }

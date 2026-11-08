@@ -586,11 +586,15 @@ console.log('=== JSON file and Copy as text: the same rows, made for a program a
   await settleAll();
   const text = copied.at(-1) ?? '';
   ok(copied.length === 1 && p.downloads.length === 2, 'Copy as text puts it on the clipboard and saves no file');
-  ok(text.startsWith('*Queue* — ') && /· \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n/.test(text), `headed with the section in WhatsApp bold, the count and the time: "${text.split('\n')[0]}"`);
-  ok(/\n1\. \*/.test(text) && new RegExp(`\\n${csvRows.length}\\. \\*`).test(text), 'one numbered block per row');
-  ok(text.includes('Spaceballs') || text.includes(csvRows[0].Title), 'the rows\' own text is in it');
-  ok(text.includes('Requester: '), 'fields as "Column: value"');
-  ok(!/: \n/.test(text) && !/^\s+[A-Za-z ]+: $/m.test(text), 'and a field left blank is left out');
+  const lines = text.trimEnd().split('\n');
+  ok(/^\*Queue\* · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(lines[0]), `headed once with the section in WhatsApp bold and the time: "${lines[0]}"`);
+  const rowLines = lines.filter((l) => l.startsWith('• '));
+  ok(rowLines.length === csvRows.length && lines.length === csvRows.length + 2, `one line per row, nothing else (${rowLines.length} of ${csvRows.length})`);
+  ok(rowLines.every((l, i) => l.startsWith(`• *${csvRows[i].Title}*`)), 'each led by its title in bold');
+  ok(rowLines.some((l) => / — .*Requester: /.test(l)), 'other fields as "Column: value" on the same line');
+  ok(!rowLines.some((l) => /: (·|$)/.test(l) || /\b(Failed|Skipped or cancelled): 0\b/.test(l)), 'and a blank field or a count of 0 is left out');
+  ok(!/Requester number|\+1555|Added: |Kind: /.test(text) && rowLines.every((l) => l.length < 160),
+    `the queue keeps the fields worth sharing - no phone numbers, no timestamps - so no line runs on (longest ${Math.max(...rowLines.map((l) => l.length))})`);
   ok(/Copied Queue — \d+ rows, ready to paste/.test(p.readToast()), `the toast says so: "${p.readToast()}"`);
 }
 {
@@ -598,9 +602,26 @@ console.log('=== JSON file and Copy as text: the same rows, made for a program a
   const p = loadPanel();
   const t = p.csv.toChatText(['Item', 'Value'], [['Port', 8080], ['Key', 'sk-abcdefghijklmnopqrstuvwxyz0123456789'], ['Empty', '']],
     { section: 'Web', now: new Date(2026, 10, 8, 14, 5) });
-  ok(t === '*Web* — 3 rows · 2026-11-08 14:05\n\n• Port: 8080\n• Key: ' + p.csv.scrubSecrets('sk-abcdefghijklmnopqrstuvwxyz0123456789') + '\n• Empty\n',
+  ok(t === '*Web* · 2026-11-08 14:05\n\n• Port: 8080\n• Key: ' + p.csv.scrubSecrets('sk-abcdefghijklmnopqrstuvwxyz0123456789') + '\n• Empty\n',
     `a name and a value is one line each: ${JSON.stringify(t)}`);
   ok(!t.includes('sk-abcdefghijklmnopqrstuvwxyz0123456789'), 'and a key is masked in the text as in the CSV');
+
+  // The operator, 2026-11-08, on the reactions card copied as 22 numbered
+  // blocks each repeating its section: "This is horrible lol". A grouping
+  // first column is a heading once; an emoji and its meaning are one line.
+  const g = p.csv.toChatText(['Part', 'Reaction', 'Meaning'], [
+    ['While your request is handled:', '🔍', 'Researching'], ['While your request is handled:', '✅', 'Done'],
+    ['If we can\'t fulfil it:', '⛔', 'Not allowed'], ['If we can\'t fulfil it:', '1️⃣ 2️⃣ …', 'Your place'],
+  ], { section: 'What the reactions mean', now: new Date(2026, 10, 8, 11, 11) });
+  ok(g === '*What the reactions mean* · 2026-11-08 11:11\n\n*While your request is handled*\n🔍 Researching\n✅ Done\n\n*If we can\'t fulfil it*\n⛔ Not allowed\n1️⃣ 2️⃣ … Your place\n',
+    `grouped, one line a reaction: ${JSON.stringify(g)}`);
+  // A first column that does not group (each row its own) stays on the row.
+  const u = p.csv.toChatText(['Title', 'Status', 'Requester'], [['Up', 'done', 'Dana'], ['Wonka', 'waiting', '']], { section: 'Q', now: new Date(2026, 10, 8, 9, 0) });
+  const ids = p.csv.toChatText(['Name', 'Number', 'WhatsApp id', 'Groups'], [['Dana', '+15551234567', '1555@s.whatsapp.net', 'Films']], { section: 'M', now: new Date(2026, 10, 8, 9, 0) });
+  ok(!/1555/.test(ids) && /• Dana: Films\n/.test(ids), `numbers and ids are left out of chat text: ${JSON.stringify(ids)}`);
+  const only = p.csv.toChatText(['Number'], [['+15551234567']], { section: 'Banned', now: new Date(2026, 10, 8, 9, 0) });
+  ok(/\+15551234567/.test(only), 'unless they are all there is, as on the banned list');
+  ok(u === '*Q* · 2026-11-08 09:00\n\n• *Up* — Status: done · Requester: Dana\n• *Wonka* — Status: waiting\n', `a wider table is a line a row: ${JSON.stringify(u)}`);
   const js = JSON.parse(p.csv.toJson(['A', 'A', 'When', 'N', 'Yes'], [['x', 'y', new Date(2026, 10, 8, 0, 5), 3, true]], { section: 'S', now: new Date(2026, 10, 8, 14, 5) }));
   ok(JSON.stringify(js.columns) === '["A","A (2)","When","N","Yes"]' && js.rows[0]['A (2)'] === 'y', 'a column name used twice does not overwrite the first in JSON');
   ok(js.rows[0].When === '2026-11-08 00:05' && js.rows[0].N === 3 && js.rows[0].Yes === true, 'times as the CSV writes them, numbers and yes/no as themselves');
