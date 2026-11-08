@@ -20,6 +20,9 @@ const fetchImpl = async (raw) => {
 const OPTS = { base: 'http://jf', token: 'T', userId: 'U', bestMatch, fetchImpl };
 const r = await findSeries('Labrats', OPTS);
 ok(r && (r.id === 'L' || r.Id === 'L'), `"Labrats" finds Lab Rats (${JSON.stringify(r)?.slice(0, 80)})`);
+// Incident (hourly check 20261106T170001Z): "laberats season 2" - run together AND misspelled.
+const m = await findSeries('laberats', OPTS);
+ok(m && (m.id === 'L' || m.Id === 'L'), `"laberats" finds Lab Rats (${JSON.stringify(m)?.slice(0, 60)})`);
 ok(await findSeries('Nothingatall', OPTS) === null, 'a show that is not there is still not found');
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

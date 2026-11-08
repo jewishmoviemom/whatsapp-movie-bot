@@ -21,5 +21,6 @@ try {
 
 const src = fs.readFileSync(new URL('../src/plugins/movie-requests/index.js', import.meta.url), 'utf8');
 ok(/found\.method === 'search' && found\.confidence < 0\.9/.test(src), 'a weak search match is checked against the library');
+ok(/Number\(found\.movie\.year\) !== typedYear/.test(src), 'a typed year that the weak match does not carry still lets the library be checked (2026-11-06, a dogs perfect christmas 2026)');
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

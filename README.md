@@ -732,12 +732,14 @@ live WhatsApp session that can read and send as your number.
 - Password login, scrypt-hashed, with rate limiting (8 tries / 15 min).
 - Secrets encrypted at rest in `config.json`.
 - `data/` is `0700`, `.env` is `0600`.
-- The **↓ CSV** button on every card of the panel downloads that card's data
-  (`src/web/public/csv-export.js`). No file ever holds a key, token or
+- The **↓ Export** button on every card of the panel downloads that card's
+  data as a CSV or JSON file, or copies it as text laid out for pasting in a
+  WhatsApp chat (`src/web/public/csv-export.js`). All three hold the same
+  rows. No file or copied text ever holds a key, token or
   password: a key box is written as the same `••••••••` the panel shows,
   whether the key is saved or only typed, and a key inside a pasted link or a
   log line is masked too.
-- **The CSV files contain personal data.** A file holds what its card shows,
+- **The exports contain personal data** — CSV, JSON and copied text alike; mind where you paste. A file holds what its card shows,
   and many cards show people: the queue, Now running and the history carry
   the names and phone numbers of the people who asked; the member list, a
   member's page, a group's members, group activity and the banned list carry

@@ -111,7 +111,7 @@ const LIST_SEP = /^\s*(?:,\s*(?:and\b|&)?|&|\+|and\b)\s*/i;
 const LIST_STARTS = [
   { re: /\bs\s*(\d{1,2})\s*[\s._-]*(?:e|ep|x)\s*(\d{1,3})\b/i, range: 'SxE-range' },
   { re: /\bs\s*(\d{1,2})\s*,\s*(?:episodes?|eps?|e)\s*(\d{1,3})\b(?!:)/i, alone: true, range: 'SxE-range' },
-  { re: /\b(?:season|series|s)\s*(\d{1,2})\s*(?:,|and|&)?\s*(?:episodes?|eps?|e)\s*(\d{1,3})\b/i, range: 'wordy-range' },
+  { re: /\b(?:season|series|s)\s*(\d{1,2})\s*(?:,|and|&|[-–—])?\s*(?:episodes?|eps?|e)\s*(\d{1,3})\b/i, range: 'wordy-range' },
   { re: /\b(\d{1,2})\s*x\s*(\d{1,3})\b/i, range: 'NxN-range' },
   { re: /\b(?:episodes?|eps?)\s*()(\d{1,3})\b/i, noSeason: true, range: 'episode-range' },
   { re: /\s+e\s*()(\d{1,3})\b/i, noSeason: true, range: 'episode-range' },
@@ -172,6 +172,19 @@ const clean = (v) => String(v ?? '')
   .replace(/\s+/g, ' ')
   .replace(/^[\s\-–—:,.]+|[\s\-–—:,.]+$/g, '')
   .trim();
+
+/**
+ * The show name in front of a season/episode marker, without a trailing
+ * "season" or "series" word. "fallout season S2E1-8" (a member,
+ * 2026-10-25) was searched as "fallout season" and answered "no series
+ * matching", though Fallout is in the library. Only stripped when a name is
+ * left, so a show called just "Season" is untouched.
+ */
+function showBefore(text) {
+  const show = clean(text);
+  const bare = clean(show.replace(/\s+(?:season|series)$/i, ''));
+  return bare || show;
+}
 
 /**
  * The seasons listed after the first, read from `rest` - the text right after
@@ -491,7 +504,7 @@ export function parseTvRequest(text) {
     // still matches the first half.
     if (c.toSeason && m[c.toSeason] != null && Number(m[c.toSeason]) !== season) continue;
     if (!(to > from)) continue;
-    const show = clean(raw.slice(0, m.index));
+    const show = showBefore(raw.slice(0, m.index));
     if (!show) continue;
     return { show, season, episode: null, episodeRange: { from, to }, raw, matched: c.name };
   }
@@ -512,7 +525,7 @@ export function parseTvRequest(text) {
 
     // Everything before the marker is the show; anything after is the episode
     // title people sometimes append ("Breaking Bad S05E14 Ozymandias").
-    const show = clean(raw.slice(0, m.index));
+    const show = showBefore(raw.slice(0, m.index));
     if (!show) continue;                       // a marker with no show name is not a request
     if (episode == null && season != null) {
       const seasons = moreSeasons(season, raw.slice(m.index + m[0].length));
@@ -578,7 +591,10 @@ function spaceGluedWords(text) {
  */
 export function stripTrailingYear(show) {
   const t = String(show ?? '').trim();
-  const m = t.match(/^(.*\S)\s+((?:19|20)\d{2})$/);
+  // A year typed with no space before it ("once upon a time2011", a member,
+  // 2026-11-08) is a year too, but only straight after a letter, so "Show 24"
+  // style names and digits inside a title are never split.
+  const m = t.match(/^(.*\S)\s+((?:19|20)\d{2})$/) || t.match(/^(.*[A-Za-z])((?:19|20)\d{2})$/);
   if (!m) return { show: t, year: null };
   return { show: m[1].trim(), year: Number(m[2]) };
 }

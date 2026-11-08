@@ -183,7 +183,7 @@ const ROSTER = [
  * The panel, with or without csv-export.js. `served` is the config GET /config
  * answers with; `routes` answers everything else, by path.
  */
-function loadPanel({ withCsv = true, served = redact(storedConfig()), routes = {}, early = null } = {}) {
+function loadPanel({ withCsv = true, served = redact(storedConfig()), routes = {}, early = null, clipboard = null } = {}) {
   const { document, window } = parseHTML(`<!doctype html><html><body>${html}</body></html>`);
 
   // linkedom gives <select> a value getter and no setter, reads an <option>
@@ -272,7 +272,7 @@ function loadPanel({ withCsv = true, served = redact(storedConfig()), routes = {
   };
 
   const win = {
-    document, localStorage, location: { reload() {}, href: '' }, navigator: {}, scrollTo() {},
+    document, localStorage, location: { reload() {}, href: '' }, navigator: clipboard ? { clipboard } : {}, scrollTo() {},
     addEventListener() {}, MutationObserver: window.MutationObserver, Blob, URL,
     // An exporter a card's script registered before csv-export.js loaded.
     ...(early ? { panelCsvExporters: early } : {}),
@@ -484,10 +484,12 @@ console.log('=== every card, on every tab, has one CSV button in its heading ===
   const btn = ownButtons(cardOf(document, '#queue-list'))[0];
   ok(btn.getAttribute('type') === 'button', 'it is type=button, so it can never submit a form');
   ok(!btn.id, 'it has no id - the search indexes button[id] as an action, and "CSV" x60 would flood it');
-  ok(btn.textContent === '', 'and no text of its own: style.css draws "CSV"');
-  ok(/download/i.test(btn.getAttribute('aria-label') ?? '') && /csv/i.test(btn.getAttribute('aria-label') ?? ''), 'a screen reader hears "Download as CSV"');
+  ok(btn.textContent === '', 'and no text of its own: style.css draws "Export"');
+  ok(['download', 'csv', 'json', 'copy'].every((w) => new RegExp(w, 'i').test(btn.getAttribute('aria-label') ?? '')),
+    `a screen reader hears what it offers: "${btn.getAttribute('aria-label')}"`);
+  ok(btn.getAttribute('aria-haspopup') === 'menu', 'and that it opens a menu');
   const css = read('style.css');
-  ok(/\.csv-btn::after\s*\{\s*content:\s*'[^']*CSV'/.test(css), 'style.css gives it its "CSV" label');
+  ok(/\.csv-btn::after\s*\{\s*content:\s*'[^']*Export'/.test(css), 'style.css gives it its "Export" label');
   ok(/\.csv-btn\.csv-push\s*\{\s*margin-left:\s*auto/.test(css), 'and pushes it to the right of the heading');
   ok(SCRIPTS.includes('csv-export.js') && SCRIPTS.indexOf('csv-export.js') > SCRIPTS.indexOf('app.js'),
     `index.html loads csv-export.js after app.js, whose names it reads (${SCRIPTS.join(', ')})`);
@@ -514,7 +516,7 @@ console.log('=== the button renames nothing: headings, search, chips, collapse m
   ok(find(withCsv, 'csv') === 'no matches', 'and "csv" does not match every card on the tab');
 }
 
-console.log('=== pressing it downloads; it does not fold the card ===');
+console.log('=== pressing it opens the menu; CSV file downloads; it does not fold the card ===');
 {
   const p = loadPanel({ routes: { '/queue': groupedQueue() } });
   p.h.setupCollapsibles();
@@ -522,6 +524,16 @@ console.log('=== pressing it downloads; it does not fold the card ===');
   const btn = ownButtons(card)[0];
   btn.click();
   await settleAll();
+  const menu = p.document.querySelector('.export-menu');
+  ok(!!menu && p.downloads.length === 0, 'a press opens the menu and saves nothing yet');
+  ok(menu && [...menu.querySelectorAll('[role=menuitem]')].map((b) => b.dataset.format).join() === 'csv,json,text',
+    'it offers CSV file, JSON file and Copy as text');
+  ok(menu?.parentElement === p.document.body && !card.contains(menu), 'in <body>, not the card, so it is never the card\'s data');
+  ok(![...(menu?.querySelectorAll('button') ?? [])].some((b) => b.id), 'and its items have no ids for the search to index');
+  ok(btn.getAttribute('aria-expanded') === 'true', 'the button says it is open');
+  menu.querySelector('[data-format=csv]').click();
+  await settleAll();
+  ok(!p.document.querySelector('.export-menu') && btn.getAttribute('aria-expanded') === 'false', 'picking closes it');
   ok(!card.classList.contains('collapsed'), 'the heading\'s collapse-on-click ignores the button');
   ok(p.downloads.length === 1, 'one file was downloaded');
   const dl = p.downloads[0];
@@ -540,6 +552,90 @@ console.log('=== pressing it downloads; it does not fold the card ===');
   ok(card.classList.contains('collapsed'), 'while a click on the heading itself still folds the card');
   // style.css hides everything in a folded card but its <h2> (.card.collapsed > *:not(h2)).
   ok(btn.parentElement === h2, 'and the button is in the <h2>, which stays on screen when folded');
+}
+
+console.log('=== JSON file and Copy as text: the same rows, made for a program and for a chat ===');
+{
+  const copied = [];
+  const p = loadPanel({ routes: { '/queue': groupedQueue() }, clipboard: { writeText: async (t) => { copied.push(t); } } });
+  const card = cardOf(p.document, '#queue-list');
+  const btn = ownButtons(card)[0];
+  const csvOut = await p.csv.exportCard(card, btn, 'csv');
+  const csvRows = records(csvOut.text);
+
+  btn.click();
+  await settleAll();
+  p.document.querySelector('.export-menu [data-format=json]').click();
+  await settleAll();
+  const dl = p.downloads.at(-1);
+  ok(/^queue-\d{4}-\d{2}-\d{2}-\d{4}\.json$/.test(dl?.filename ?? ''), `JSON file: named "${dl?.filename}"`);
+  ok(dl?.blob?.type === 'application/json;charset=utf-8', 'as application/json in UTF-8');
+  let j = null;
+  try { j = JSON.parse(dl.blob.text); } catch { /* checked below */ }
+  ok(!!j, 'and it parses');
+  ok(j?.section === 'Queue' && j?.count === csvRows.length && j?.rows?.length === csvRows.length, `it names the section and holds the CSV's ${csvRows.length} rows`);
+  ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(j?.exported ?? ''), `the time it was made on the 24-hour clock (${j?.exported})`);
+  ok(JSON.stringify(j?.columns) === JSON.stringify(Object.keys(csvRows[0])), 'its columns are the CSV\'s');
+  ok(j?.rows?.every((r, i) => Object.entries(r).every(([k, v]) => String(v ?? '') === String(csvRows[i][k] ?? '').replace(/^'/, ''))),
+    'every value is the CSV\'s, cell for cell');
+  ok(/queue-.*\.json — \d+ rows/.test(p.readToast()), `the toast says what was saved: "${p.readToast()}"`);
+
+  btn.click();
+  await settleAll();
+  p.document.querySelector('.export-menu [data-format=text]').click();
+  await settleAll();
+  const text = copied.at(-1) ?? '';
+  ok(copied.length === 1 && p.downloads.length === 2, 'Copy as text puts it on the clipboard and saves no file');
+  ok(text.startsWith('*Queue* — ') && /· \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n/.test(text), `headed with the section in WhatsApp bold, the count and the time: "${text.split('\n')[0]}"`);
+  ok(/\n1\. \*/.test(text) && new RegExp(`\\n${csvRows.length}\\. \\*`).test(text), 'one numbered block per row');
+  ok(text.includes('Spaceballs') || text.includes(csvRows[0].Title), 'the rows\' own text is in it');
+  ok(text.includes('Requester: '), 'fields as "Column: value"');
+  ok(!/: \n/.test(text) && !/^\s+[A-Za-z ]+: $/m.test(text), 'and a field left blank is left out');
+  ok(/Copied Queue — \d+ rows, ready to paste/.test(p.readToast()), `the toast says so: "${p.readToast()}"`);
+}
+{
+  // A two-column table is a line per row.
+  const p = loadPanel();
+  const t = p.csv.toChatText(['Item', 'Value'], [['Port', 8080], ['Key', 'sk-abcdefghijklmnopqrstuvwxyz0123456789'], ['Empty', '']],
+    { section: 'Web', now: new Date(2026, 10, 8, 14, 5) });
+  ok(t === '*Web* — 3 rows · 2026-11-08 14:05\n\n• Port: 8080\n• Key: ' + p.csv.scrubSecrets('sk-abcdefghijklmnopqrstuvwxyz0123456789') + '\n• Empty\n',
+    `a name and a value is one line each: ${JSON.stringify(t)}`);
+  ok(!t.includes('sk-abcdefghijklmnopqrstuvwxyz0123456789'), 'and a key is masked in the text as in the CSV');
+  const js = JSON.parse(p.csv.toJson(['A', 'A', 'When', 'N', 'Yes'], [['x', 'y', new Date(2026, 10, 8, 0, 5), 3, true]], { section: 'S', now: new Date(2026, 10, 8, 14, 5) }));
+  ok(JSON.stringify(js.columns) === '["A","A (2)","When","N","Yes"]' && js.rows[0]['A (2)'] === 'y', 'a column name used twice does not overwrite the first in JSON');
+  ok(js.rows[0].When === '2026-11-08 00:05' && js.rows[0].N === 3 && js.rows[0].Yes === true, 'times as the CSV writes them, numbers and yes/no as themselves');
+  ok(p.csv.toJson(['F'], [['=1+1']]).includes('"=1+1"'), 'and no spreadsheet formula guard - nothing runs a JSON string');
+}
+{
+  // The browser refuses the copy: the text is shown to copy by hand.
+  const p = loadPanel({ routes: { '/queue': groupedQueue() }, clipboard: { writeText: async () => { throw new Error('NotAllowedError'); } } });
+  const card = cardOf(p.document, '#queue-list');
+  const out = await p.csv.exportCard(card, ownButtons(card)[0], 'text');
+  const box = p.document.querySelector('.copy-box');
+  ok(out?.copied === false && !!box, 'a refused copy opens a box with the text in it');
+  ok(box?.querySelector('textarea')?.value === out?.text, 'holding exactly what would have been copied');
+  ok(box?.parentElement === p.document.body && !card.contains(box), 'outside every card');
+  box?.querySelector('button')?.click();
+  ok(!p.document.querySelector('.copy-box'), 'and Close takes it away');
+}
+{
+  // Escape closes the menu; so does a tap elsewhere.
+  const p = loadPanel({ routes: { '/queue': groupedQueue() } });
+  const card = cardOf(p.document, '#queue-list');
+  const btn = ownButtons(card)[0];
+  btn.click();
+  const menu = p.document.querySelector('.export-menu');
+  const esc = new p.window.Event('keydown', { bubbles: true }); esc.key = 'Escape';
+  menu?.querySelector('button')?.dispatchEvent(esc);
+  ok(!p.document.querySelector('.export-menu'), 'Escape closes the menu');
+  btn.click();
+  ok(!!p.document.querySelector('.export-menu'), 'a press opens it again');
+  btn.click();
+  ok(!p.document.querySelector('.export-menu'), 'and a second press on the button closes it');
+  btn.click();
+  p.document.querySelector('h1, header, #toast')?.dispatchEvent(new p.window.Event('pointerdown', { bubbles: true }));
+  ok(!p.document.querySelector('.export-menu'), 'a tap anywhere else closes it');
+  ok(p.downloads.length === 0, 'none of which saves anything');
 }
 
 console.log('=== a card that appears later gets the button too ===');
@@ -1161,6 +1257,7 @@ console.log('=== the Hourly checks card: one CSV control, fed by the card\'s own
   ok(p.csv.exporterFor(card)?.slug === 'hourly-checks', 'and it runs the exporter the card\'s own script registered, not the generic one');
 
   csvControls[0].click();
+  p.document.querySelector('.export-menu [data-format=csv]')?.click();
   await settleAll();
   ok(p.downloads.length === 1 && /^hourly-checks-\d{4}-\d{2}-\d{2}-\d{4}\.csv$/.test(p.downloads[0].filename),
     `one file, named the house way (${p.downloads[0]?.filename})`);
@@ -1202,6 +1299,7 @@ console.log('=== the hook: a card\'s own script hands the shared button its data
     run: async () => ({ columns: ['Time', 'Result'], rows: [[new Date(T0), 'all clear'], [new Date(T0 + 3600000), '=found 1']] }) });
   ok(registered >= 2, 'window.panelCsvExporters.push() registers an exporter after load');
   shared.click();
+  p.document.querySelector('.export-menu [data-format=csv]')?.click();
   await settleAll();
   ok(p.downloads.length === 1 && /^later-card-\d{4}-\d{2}-\d{2}-\d{4}\.csv$/.test(p.downloads[0].filename),
     `the heading's button uses it, and names the file the house way (${p.downloads[0]?.filename})`);

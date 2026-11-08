@@ -92,5 +92,23 @@ console.log('=== a season that came back whole costs nothing more ===');
   ok(eps.length === 2 && !asked.some((a) => a.includes('seasonId=')), 'two asked, two held: the folder is not fetched');
 }
 
+console.log('=== ?season= returns the whole folder, every file unnumbered ===');
+{
+  // Food Wars! season 1 (a member, 2026-11-07): all 24 files came back
+  // for ?season=1 with no season or episode number, the folder count matched,
+  // so the folder pass never ran and the bot said the show "has no season 1".
+  const f = (n) => ({ Id: `fw${n}`, SeriesName: 'Food Wars!', SeasonId: SEASON1, Name: `MK.Food.Wars!.-.${String(n).padStart(2, '0')}`,
+    Path: `/anime/Food Wars!/Season 1/MK.Food.Wars!.-.${String(n).padStart(2, '0')}.BD.1080pHi10Dual-Audio7B0E2FE5_720p.mp4` });
+  const all = [...Array(24).keys()].map((i) => f(i + 1));
+  const fw = async (url) => {
+    const u = new URL(url);
+    const json = (body) => ({ ok: true, status: 200, json: async () => body });
+    if (u.pathname.endsWith('/Seasons')) return json({ Items: [{ Id: SEASON1, IndexNumber: 1, ChildCount: 24 }] });
+    return json({ Items: all });
+  };
+  const eps = await listEpisodes('fw', { ...opts, season: 1, fetchImpl: fw });
+  ok(eps.length === 24 && eps.every((e) => e.season === 1 && Number.isFinite(e.episode)), `24 episodes, numbered from the file names (${eps.length})`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { lookupMovie, lookupById, obscureReason, isTooBroad, listPlots, OMDB_RETRY_SPAN_MS } from './omdb.js';
+import { lookupMovie, lookupById, lookupNearYear, obscureReason, isTooBroad, listPlots, OMDB_RETRY_SPAN_MS } from './omdb.js';
 import { isTheatricalOnly, isBlockedRating } from './theatrical.js';
 import { findInLibrary, researchLibrary, tvItemRefusal, closestNote, createProvider } from './library.js';
 import { namedOtherwise, tmdbFirstFilm } from './named-otherwise.js';
@@ -3112,13 +3112,34 @@ export default {
     // not in the library while Deadpool & Wolverine (2024) sat on the server.
     // Only a search match that scores below 0.9 is second-guessed, and only by
     // a library title scoring clearly higher (researchLibrary's own bar).
-    if (found && found.method === 'search' && found.confidence < 0.9 && !extractYear(text)) {
+    // A typed year does not exempt the match when the film found is from
+    // another year: "a dogs perfect Christmas 2026" (Mia, 2026-11-06 15:16)
+    // was resolved to a 2017 film [search 0.72] and refused, with A Dog's
+    // Perfect Christmas (2026) on the server.
+    const typedYear = extractYear(text);
+    if (found && found.method === 'search' && found.confidence < 0.9
+        && (!typedYear || Number(found.movie.year) !== typedYear)) {
+      // With a typed year only a near-exact library title may displace the match:
+      // "fast and furios 2013" must not be sent Fast & Furious 6 (0.92).
+      const bar = typedYear ? 0.95 : 0;
       try {
         const better = await researchLibrary(text, ctx.config.library);
-        if (better && better.score >= found.confidence + 0.05
+        if (better && better.score >= Math.max(bar, found.confidence + 0.05)
             && normalizeTitle(better.title) !== normalizeTitle(found.movie.title)) {
-          const again = await lookupMovie(`${better.title}${better.year ? ` ${better.year}` : ''}`,
+          let again = await lookupMovie(`${better.title}${better.year ? ` ${better.year}` : ''}`,
             { apiKey: ctx.config.omdb.apiKey });
+          // OMDb often names a film without the library's subtitle: "dune part
+          // one" (a member, 2026-11-08 03:05) found Dune: Part One (2021) in the
+          // library, OMDb knows it only as "Dune" (2021), the lookup failed and
+          // the weak match, Dune: Part Two (2024), was sent. Try the title before
+          // its subtitle, and accept it only in the library's own year.
+          if (!again && better.year) {
+            const base = better.title.split(/\s*[:–—-]\s+/)[0].trim();
+            if (base && base !== better.title) {
+              const baseHit = await lookupMovie(`${base} ${better.year}`, { apiKey: ctx.config.omdb.apiKey });
+              if (baseHit && Number(baseHit.movie.year) === Number(better.year)) again = baseHit;
+            }
+          }
           if (again) {
             ctx.log.info(`research: OMDb's weak match for "${text}" (${found.movie.title}, ${found.confidence.toFixed(2)}) `
               + `gives way to the library's "${better.title}" (${better.score.toFixed(2)})`);
@@ -3152,6 +3173,27 @@ export default {
             `${corrected.title}${corrected.year ? ` ${corrected.year}` : ''}`,
             { apiKey: ctx.config.omdb.apiKey },
           );
+          // OMDb names many films without the library's subtitle: "snake eyes:
+          // G.I. jones origins" (a member, 2026-11-08 08:14) was recovered
+          // as the library's Snake Eyes: G.I. Joe Origins (2021), OMDb knows
+          // it only as "Snake Eyes" (2021), and the request was answered "not
+          // recognised". Try the title before the subtitle, in the library's
+          // own year only.
+          if (!found && corrected.year) {
+            const base = corrected.title.split(/\s*[:–—-]\s+/)[0].trim();
+            if (base && base !== corrected.title) {
+              const baseHit = await lookupMovie(`${base} ${corrected.year}`, { apiKey: ctx.config.omdb.apiKey });
+              if (baseHit && Number(baseHit.movie.year) === Number(corrected.year)) found = baseHit;
+            }
+          }
+          // OMDb and Jellyfin disagree by a year on some films: "Atonement
+          // (2007)" (a member, 2026-11-08 14:43) was recovered as the library's
+          // Atonement (2007), but OMDb files it under 2008, and its year
+          // filter found nothing, so the request was answered "not
+          // recognised". The exact title one year either side is the same film.
+          if (!found && corrected.year) {
+            found = await lookupNearYear(corrected.title, Number(corrected.year), { apiKey: ctx.config.omdb.apiKey });
+          }
         } catch (err) {
           ctx.log.warn(`re-lookup of "${corrected.title}" failed: ${err.message}`);
         }

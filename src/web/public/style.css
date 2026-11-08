@@ -453,11 +453,24 @@ input.emoji { text-align: center; font-size: 20px; padding: 6px; }
    the same with the button as without it. It stays in the heading, so a
    folded card can still be downloaded. */
 .csv-btn { flex: none; margin-left: 8px; color: var(--muted); font-weight: 600; }
-.csv-btn::after { content: '↓ CSV'; }
+.csv-btn::after { content: '↓ Export'; }
 .csv-btn.csv-push { margin-left: auto; }
 .csv-btn:hover { color: var(--fg); border-color: var(--accent); }
 .csv-btn[aria-busy="true"] { opacity: .55; cursor: progress; }
 .csv-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+/* The export button's menu: CSV, JSON, copy as text (csv-export.js). */
+.export-menu { position: absolute; z-index: 60; min-width: 220px; max-width: calc(100vw - 16px);
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.25); padding: 4px; display: flex; flex-direction: column; }
+.export-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  background: none; border: 0; border-radius: 6px; padding: 10px 12px; color: var(--fg); cursor: pointer; font: inherit; }
+.export-item:hover, .export-item:focus { background: rgba(127,127,127,.15); outline: none; }
+.copy-box { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.5); display: flex;
+  align-items: center; justify-content: center; padding: 16px; }
+.copy-box-inner { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px; width: min(640px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.copy-box textarea { width: 100%; min-height: 40vh; font-family: var(--mono); font-size: 13px; }
+.copy-box .btn { align-self: flex-end; }
 
 @keyframes flashcard { from { box-shadow: 0 0 0 2px var(--accent); } to { box-shadow: 0 0 0 2px transparent; } }
 .card.flash { animation: flashcard 1.6s ease-out; }

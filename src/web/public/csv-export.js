@@ -31,7 +31,17 @@
    Personal data does. The queue, the history, the member lists and the
    group pages carry the names and phone numbers of the people in them, on
    purpose: the owner shares these files deliberately, with people who need
-   to know who asked. The README's Security section says so. */
+   to know who asked. The README's Security section says so.
+
+   JSON and copy-as-text (2026-11-08): "Add an option throughout the suite
+   aside from downloading a csv an option to download Json or simply copy
+   text to clipboard for pasting in a chat". The button in the heading now
+   opens a small menu - CSV file, JSON file, Copy as text - and all three are
+   made from the same table, so one card gives the same rows, the same
+   secret masking and the same names and numbers whichever is picked. The
+   text is laid out for WhatsApp: the card's name in *bold*, then one line
+   per row for a two-column table, or a numbered block per row with a
+   "Column: value" line for each field that is filled in. */
 (() => {
   'use strict';
 
@@ -157,9 +167,81 @@
   }
 
   /** "queue-2026-09-25-1605.csv": which section, and when, in the name. */
-  function csvFilename(slug, now = new Date()) {
+  function csvFilename(slug, now = new Date(), ext = 'csv') {
     return `${csvSlug(slug)}-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-      + `-${pad(now.getHours())}${pad(now.getMinutes())}.csv`;
+      + `-${pad(now.getHours())}${pad(now.getMinutes())}.${ext}`;
+  }
+
+  /** A cell as JSON keeps it: numbers and yes/no as themselves, a time as the CSV writes it, text swept for secrets. */
+  function jsonCell(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v === 'boolean') return v;
+    if (v instanceof Date) return csvWhen(v);
+    return scrubSecrets(String(v));
+  }
+
+  /** Column names as object keys: a name used twice gets " (2)", so no field overwrites another. */
+  function uniqueKeys(columns) {
+    const seen = new Map();
+    return columns.map((c) => {
+      const base = String(c ?? '').trim() || 'Column';
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      return n === 1 ? base : `${base} (${n})`;
+    });
+  }
+
+  /**
+   * The JSON file: which section, when, and one object per row keyed by the
+   * column names - what a script or another program wants, where the CSV is
+   * for a spreadsheet. No formula guard: nothing runs a JSON string.
+   */
+  function toJson(columns, rows, { section = '', note = '', now = new Date() } = {}) {
+    const keys = uniqueKeys(columns);
+    const out = {
+      section,
+      exported: csvWhen(now),
+      ...(note ? { note } : {}),
+      count: rows.length,
+      columns: keys,
+      rows: rows.map((r) => Object.fromEntries(keys.map((k, i) => [k, jsonCell(r[i])]))),
+    };
+    return `${JSON.stringify(out, null, 2)}\n`;
+  }
+
+  /** A cell as chat text: on one line, secrets masked, a time on the 24-hour clock. */
+  function chatCell(v) {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+    if (typeof v === 'boolean') return v ? 'yes' : 'no';
+    if (v instanceof Date) return csvWhen(v);
+    return scrubSecrets(String(v)).replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Text to paste into a chat, WhatsApp's formatting: the section in *bold*
+   * with the row count and time, then a line per row when a row is a name
+   * and a value, or else a numbered block per row - its first field in bold,
+   * then each other field that is filled in as "Column: value".
+   */
+  function toChatText(columns, rows, { section = '', note = '', now = new Date() } = {}) {
+    const head = `*${section || 'Export'}* — ${rows.length} row${rows.length === 1 ? '' : 's'} · ${csvWhen(now)}`;
+    const out = [head];
+    if (note) out.push(`_${note}_`);
+    out.push('');
+    const cells = rows.map((r) => columns.map((c, i) => chatCell(r[i])));
+    if (columns.length <= 2) {
+      for (const r of cells) out.push(`• ${r.filter(Boolean).join(': ')}`);
+    } else {
+      cells.forEach((r, n) => {
+        const first = r.findIndex(Boolean);
+        out.push(`${n + 1}. *${first < 0 ? '(blank)' : r[first]}*`);
+        r.forEach((v, i) => { if (v && i !== first) out.push(`   ${columns[i]}: ${v}`); });
+        if (n < cells.length - 1) out.push('');
+      });
+    }
+    return `${out.join('\n').trimEnd()}\n`;
   }
 
   /**
@@ -168,8 +250,8 @@
    * URL is revoked once the browser has had time to start the download; iOS
    * Safari loses a download whose URL is revoked straight after the click.
    */
-  function downloadCsv(filename, text) {
-    const blob = new window.Blob([text], { type: 'text/csv;charset=utf-8' });
+  function downloadCsv(filename, text, type = 'text/csv;charset=utf-8') {
+    const blob = new window.Blob([text], { type });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.setAttribute('href', url);
@@ -186,7 +268,7 @@
 
   // Controls and chrome, never data. A pairing code or QR is how a device
   // links to this WhatsApp number, so it is kept out along with the buttons.
-  const NOT_TEXT = 'button, script, style, img, svg, input, select, textarea, option, .csv-btn, .hidden, .pair-box';
+  const NOT_TEXT = 'button, script, style, img, svg, input, select, textarea, option, .csv-btn, .export-menu, .hidden, .pair-box';
 
   /** An element's text without its buttons, controls or hidden parts, on one line. */
   function textOf(el, drop = '') {
@@ -1244,22 +1326,107 @@
     return { ...t, filename: csvFilename(t.slug, now), text: toCsv(t.columns, t.rows) };
   }
 
-  async function exportCard(card, btn) {
+  /** The same, as JSON or as chat text. */
+  async function exportFor(card, format = 'csv', now = new Date()) {
+    if (format === 'csv') return csvFor(card, now);
+    const t = await tableFor(card);
+    const meta = { section: cardTitle(card) || t.slug, note: t.note, now };
+    if (format === 'json') return { ...t, filename: csvFilename(t.slug, now, 'json'), text: toJson(t.columns, t.rows, meta) };
+    return { ...t, filename: '', text: toChatText(t.columns, t.rows, meta) };
+  }
+
+  /**
+   * Put text on the clipboard. The async Clipboard API needs a secure page
+   * (https, or localhost) - the panel on its LAN address is plain http - so
+   * the old copy command on a hidden text box is tried next. Resolves true
+   * when either worked.
+   */
+  async function writeClipboard(text) {
+    try {
+      if (window.navigator?.clipboard?.writeText && window.isSecureContext !== false) {
+        await window.navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch { /* fall through to the copy command */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select?.();
+      const done = typeof document.execCommand === 'function' && document.execCommand('copy');
+      ta.remove();
+      return !!done;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * When the browser refuses both - Safari once a fetch has used up the tap
+   * that allowed a copy - the text is shown in a box, selected, to copy by
+   * hand rather than lost.
+   */
+  function showCopyBox(title, text) {
+    document.querySelector('.copy-box')?.remove();
+    const wrap = document.createElement('div');
+    wrap.className = 'copy-box';
+    wrap.setAttribute('role', 'dialog');
+    wrap.setAttribute('aria-label', `Copy ${title}`);
+    const inner = document.createElement('div');
+    inner.className = 'copy-box-inner';
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'The browser would not copy it by itself - press and hold (or Ctrl+C) to copy:';
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    const close = document.createElement('button');
+    close.setAttribute('type', 'button');
+    close.className = 'btn small';
+    close.textContent = 'Close';
+    close.addEventListener('click', () => wrap.remove());
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) wrap.remove(); });
+    inner.append(p, ta, close);
+    wrap.appendChild(inner);
+    document.body.appendChild(wrap);
+    ta.focus?.();
+    ta.select?.();
+    return wrap;
+  }
+
+  const FORMAT_NAME = { csv: 'CSV', json: 'JSON', text: 'text' };
+
+  async function exportCard(card, btn, format = 'csv') {
     if (btn?.getAttribute('aria-busy') === 'true') return null;
     btn?.setAttribute('aria-busy', 'true');
     const title = cardTitle(card) || 'this section';
     try {
-      const out = await csvFor(card);
+      const out = await exportFor(card, format);
       if (!out.rows.length) {
         toast(`Nothing to export in ${title} yet`);
         return out;
       }
-      downloadCsv(out.filename, out.text);
-      toast(`${out.filename} — ${out.rows.length} row${out.rows.length === 1 ? '' : 's'}${out.note ? ` (${out.note})` : ''}`, !!out.note);
+      const rowsSaid = `${out.rows.length} row${out.rows.length === 1 ? '' : 's'}${out.note ? ` (${out.note})` : ''}`;
+      if (format === 'text') {
+        if (await writeClipboard(out.text)) {
+          out.copied = true;
+          toast(`Copied ${title} — ${rowsSaid}, ready to paste`, !!out.note);
+        } else {
+          out.copied = false;
+          showCopyBox(title, out.text);
+        }
+        return out;
+      }
+      downloadCsv(out.filename, out.text, format === 'json' ? 'application/json;charset=utf-8' : undefined);
+      toast(`${out.filename} — ${rowsSaid}`, !!out.note);
       return out;
     } catch (err) {
       if (!err?.handled) {
-        console.warn(`CSV export of "${title}" failed: ${err?.message}`);
+        console.warn(`${FORMAT_NAME[format] ?? 'CSV'} export of "${title}" failed: ${err?.message}`);
         toast(`Could not export ${title}: ${err?.message}`, true);
       }
       return null;
@@ -1291,8 +1458,10 @@
     const btn = document.createElement('button');
     btn.setAttribute('type', 'button');
     btn.className = 'btn tiny csv-btn';
-    btn.setAttribute('aria-label', 'Download as CSV');
-    btn.setAttribute('title', 'Download this section as a CSV file');
+    btn.setAttribute('aria-label', 'Export: download as CSV or JSON, or copy as text');
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('title', 'Download this section as CSV or JSON, or copy it as text for a chat');
     // Pushed to the right edge of the heading, unless something there - a
     // Refresh button, an "open full log →" link - already is.
     const pushed = [...head.children].some((el) => el.classList.contains('card-link')
@@ -1300,12 +1469,89 @@
     if (head.tagName === 'H2' && !pushed) btn.classList.add('csv-push');
     btn.addEventListener('click', (e) => {
       e.preventDefault();
-      exportCard(card, btn);
+      e.stopPropagation?.();
+      if (MENU.btn === btn) closeMenu(); else openMenu(card, btn);
     });
     head.appendChild(btn);
     card.__csvButton = btn;
     return btn;
   }
+
+  /* ------------------------------- the menu -------------------------------- */
+
+  // One menu on the page at a time, under the button that opened it. It is
+  // put in <body>, not the card, so it is never read as the card's data and
+  // a folded card's CSS cannot hide it; its items have no ids, so the search
+  // does not index them.
+  const MENU = { el: null, btn: null };
+  const CHOICES = [
+    ['csv', 'CSV file', 'for a spreadsheet'],
+    ['json', 'JSON file', 'for a script or another program'],
+    ['text', 'Copy as text', 'to paste in a chat'],
+  ];
+
+  function closeMenu({ focus = false } = {}) {
+    const { el, btn } = MENU;
+    MENU.el = null; MENU.btn = null;
+    el?.remove();
+    btn?.setAttribute('aria-expanded', 'false');
+    if (focus) btn?.focus?.();
+  }
+
+  function openMenu(card, btn) {
+    closeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'export-menu';
+    menu.setAttribute('role', 'menu');
+    const items = CHOICES.map(([format, label, hint]) => {
+      const item = document.createElement('button');
+      item.setAttribute('type', 'button');
+      item.setAttribute('role', 'menuitem');
+      item.className = 'export-item';
+      item.dataset.format = format;
+      const b = document.createElement('span');
+      b.textContent = label;
+      const h = document.createElement('span');
+      h.className = 'muted small';
+      h.textContent = hint;
+      item.append(b, h);
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation?.();
+        closeMenu();
+        exportCard(card, btn, format);
+      });
+      return item;
+    });
+    menu.append(...items);
+    menu.addEventListener('keydown', (e) => {
+      const at = items.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); closeMenu({ focus: true }); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); items[(at + 1) % items.length].focus?.(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); items[(at - 1 + items.length) % items.length].focus?.(); }
+      else if (e.key === 'Tab') closeMenu();
+    });
+    document.body.appendChild(menu);
+    // Under the button, kept on the screen: a phone is 390 px wide and the
+    // button sits at the right edge of the heading.
+    const r = btn.getBoundingClientRect?.() ?? { left: 0, right: 0, bottom: 0 };
+    const vw = window.innerWidth || document.documentElement?.clientWidth || 0;
+    const w = menu.offsetWidth || 220;
+    const left = Math.max(8, Math.min((r.right || r.left) - w, (vw || w + 16) - w - 8));
+    menu.style.left = `${Math.round(left + (window.scrollX || 0))}px`;
+    menu.style.top = `${Math.round((r.bottom || 0) + 4 + (window.scrollY || 0))}px`;
+    MENU.el = menu; MENU.btn = btn;
+    btn.setAttribute('aria-expanded', 'true');
+    items[0].focus?.();
+    return menu;
+  }
+
+  // A tap or click anywhere else closes it, and so does scrolling the menu's
+  // button away or resizing the window.
+  document.addEventListener('pointerdown', (e) => {
+    if (MENU.el && !MENU.el.contains(e.target) && e.target !== MENU.btn) closeMenu();
+  });
+  window.addEventListener?.('resize', () => closeMenu());
 
   function injectAll() {
     for (const card of document.querySelectorAll('.card')) ensureButton(card);
@@ -1329,5 +1575,6 @@
     csvCell, toCsv, csvWhen, csvWhenIn, csvSlug, csvFilename, scrubSecrets, isSecretField,
     genericTable, tableFor, csvFor, exportCard, exporterFor, injectAll, downloadCsv, MASK,
     register, isoPanelDates, queueRows,
+    toJson, toChatText, exportFor, writeClipboard, showCopyBox, openMenu, closeMenu,
   };
 })();

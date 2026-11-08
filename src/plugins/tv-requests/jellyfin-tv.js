@@ -134,6 +134,14 @@ function preferStocked(winner, items, year) {
   return twin ?? winner;
 }
 
+/** Are `a` and `b` equal but for ONE swap of two neighbouring letters (6+ long)? */
+export function isAdjacentSwap(a, b) {
+  if (!a || a.length < 6 || a.length !== b.length || a === b) return false;
+  let i = 0;
+  while (a[i] === b[i]) i++;
+  return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+}
+
 /** Best local match across all of an item's names, or null. */
 function matchLocally(show, items, bestMatch, year = null, threshold = DIRECT_THRESHOLD) {
   if (!items.length) return null;
@@ -148,7 +156,21 @@ function matchLocally(show, items, bestMatch, year = null, threshold = DIRECT_TH
       getTitle: (c) => c.name,
       getYear: (c) => c.item.ProductionYear,
     });
-    return m ? { item: preferStocked(m.item.item, items, year), score: m.score } : null;
+    if (m) return { item: preferStocked(m.item.item, items, year), score: m.score };
+    // Wide nets (threshold above DIRECT) demand 0.9, and two swapped letters
+    // in a seven-letter title score only 0.857: "sekirie" never found Sekirei
+    // (2026-11-08). A pure adjacent swap is a slip of the fingers, not a
+    // different show the way crew/crow is, so it clears the bar.
+    if (threshold > DIRECT_THRESHOLD) {
+      const typed = plain(show);
+      for (const i of items) {
+        if (!yearFits(i, year)) continue;
+        if (namesOf(i).some((n) => isAdjacentSwap(typed, plain(n)))) {
+          return { item: preferStocked(i, items, year), score: 0.9 };
+        }
+      }
+    }
+    return null;
   }
   const lower = String(show).toLowerCase().trim();
   const exact = items.find((i) => namesOf(i).some((n) => String(n).toLowerCase().trim() === lower));
@@ -509,20 +531,27 @@ export async function listEpisodes(seriesId, { season = null, base, token, userI
     };
   };
 
-  const list = (await fetchList(season != null ? { season: String(season) } : {})).map((e) => map(e));
-  if (season == null) return list;
+  const first = (await fetchList(season != null ? { season: String(season) } : {})).map((e) => map(e));
+  if (season == null) return first;
+  // Files Jellyfin gave neither a season nor an episode number, yet returned
+  // for ?season= (Food Wars! season 1: "MK.Food.Wars!.-.01...", 24 of 24
+  // unnumbered): the folder's count matched, so the folder pass below never
+  // ran, nothing carried season 1, and a member was told the show "has
+  // no season 1" (2026-11-07). They are numbered by the folder pass instead.
+  const unnumbered = new Set(first.filter((e) => e.season == null && e.episode == null).map((e) => e.id));
+  const list = first.filter((e) => !unnumbered.has(e.id));
 
   let folder = null;
   try {
     folder = (await listSeasons(seriesId, { base, token, userId, fetchImpl })).find((x) => x.season === Number(season)) ?? null;
   } catch { /* what ?season= gave is the answer, as before */ }
-  if (!folder || !(folder.episodes > list.length)) return list;
+  if (!folder || !(folder.episodes > list.length || unnumbered.size)) return first;
 
   let more = [];
   try {
     const have = new Set(list.map((e) => e.id));
     more = (await fetchList({ seasonId: folder.id })).filter((e) => !have.has(e.Id)).map((e) => map(e, folder));
-  } catch { return list; }
+  } catch { return first; }
   // A number read from a file name never displaces one Jellyfin gave, or an
   // earlier copy: Frieren's season 1 folder held episode 8 twice.
   const taken = new Set(list.filter((e) => e.episode != null).map((e) => `${e.season}:${e.episode}`));
@@ -1175,6 +1204,47 @@ export async function findSplitWord(show, { base, token, userId, fetchImpl = fet
       const r = await getJson(fetchImpl, url.toString(), headers);
       const items = (r.Items ?? []).filter((it) => namesOf(it).some((n) => String(n).toLowerCase().trim() === spaced.toLowerCase()));
       const hit = matchLocally(spaced, items, bestMatch, year);
+      if (hit) return shape(hit.item, hit.score, 'split');
+    } catch { /* a failed guess is just a miss */ }
+  }
+  return findMistypedSplitWord(s, { base, token, userId, fetchImpl, bestMatch, year });
+}
+
+// True when a and b differ by at most one inserted, dropped or changed letter.
+function withinOneEdit(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  const [lo, hi] = a.length < b.length ? [a, b] : [b, a];
+  return lo.slice(i) === hi.slice(i + 1);
+}
+
+/**
+ * A one-word title that is both run together and misspelled: "laberats season
+ * 2" was answered "no series matching" although "Lab Rats" is on the server
+ * (found again by hourly check 20261106T170001Z, after "Labrats" alone was
+ * fixed). The exact spaced guess cannot work, so search the first and the last
+ * four letters (a typo is rarely at both ends) and accept only a spaced title
+ * whose letters, spaces removed, are within one edit of what was typed.
+ */
+async function findMistypedSplitWord(s, { base, token, userId, fetchImpl, bestMatch, year }) {
+  if (s.length < 7) return null;
+  const headers = { 'X-Emby-Token': token, Accept: 'application/json' };
+  const compact = (n) => String(n).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const want = compact(s);
+  for (const term of [s.slice(0, 4), s.slice(-4)]) {
+    try {
+      const url = new URL(`${base}/Items`);
+      url.searchParams.set('searchTerm', term);
+      url.searchParams.set('IncludeItemTypes', 'Series');
+      url.searchParams.set('Recursive', 'true');
+      url.searchParams.set('Limit', '50');
+      url.searchParams.set('Fields', SERIES_FIELDS);
+      if (userId) url.searchParams.set('UserId', userId);
+      const r = await getJson(fetchImpl, url.toString(), headers);
+      const items = (r.Items ?? []).filter((it) => namesOf(it).some((n) => /\s/.test(String(n).trim()) && withinOneEdit(compact(n), want)));
+      const hit = matchLocally(String(items[0] ? namesOf(items[0])[0] : ''), items, bestMatch, year);
       if (hit) return shape(hit.item, hit.score, 'split');
     } catch { /* a failed guess is just a miss */ }
   }

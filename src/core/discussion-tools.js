@@ -2,6 +2,7 @@ import log from '../util/logger.js';
 import { ticketLabel } from './issue-tickets.js';
 import { findSeries as realFindSeries, listSeasons as realListSeasons } from '../plugins/tv-requests/jellyfin-tv.js';
 import { bestMatch } from '../util/fuzzy.js';
+import { discoverTitle as realDiscoverTitle } from '../plugins/movie-requests/library.js';
 
 const logger = log.scope('discussion-tools');
 
@@ -28,7 +29,7 @@ const MAX_ROWS = 10;
  * @param notify      async (text) => posts to the notifications group
  * @param now         () => ms
  */
-export function createDiscussionTools({ stateStore, getConfig, createProvider, nextTicket, notify, now = () => Date.now(), findSeries = realFindSeries, listSeasons = realListSeasons }) {
+export function createDiscussionTools({ stateStore, getConfig, createProvider, nextTicket, notify, now = () => Date.now(), findSeries = realFindSeries, listSeasons = realListSeasons, discoverTitle = realDiscoverTitle }) {
   const tickets = () => stateStore.namespace('agent-tickets');
 
   // rawSearch is films only: on 2026-10-29 the agent searched "Impractical Jokers
@@ -70,6 +71,14 @@ export function createDiscussionTools({ stateStore, getConfig, createProvider, n
         year: r.year ?? r.ProductionYear ?? null,
         type: String(r.type ?? r.Type ?? '').slice(0, 30) || null,
       })).filter((m) => m.name);
+      // Jellyfin's own search is a weak substring filter: "spiderman brand new
+      // day" returns nothing for "Spider-Man: Brand New Day". On 2026-11-08 the
+      // agent opened ticket #0010 saying no file matched a film that was there.
+      // When it finds no film, ask the way a movie request does.
+      if (!matches.length) {
+        const found = await discoverTitle(provider, t, { threshold: 0.8 }).catch(() => null);
+        if (found?.title) matches.push({ name: String(found.title).slice(0, 120), year: found.year ?? null, type: 'Movie' });
+      }
       const show = await findShow(provider, t);
       if (show) matches.push(show);
       return matches.length ? { matches, count: matches.length } : { matches: [], note: `nothing on the server matches "${t}"` };

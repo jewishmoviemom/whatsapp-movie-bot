@@ -784,11 +784,19 @@ function sameShowPart(earlier, later) {
   // a list by the episodes it names. Which episodes each row is about is read
   // as the re-run rules read it (hourly-policy.js tvEpisodes), so the scan
   // never calls a part a repeat that a re-run would be let through for.
-  if (Array.isArray(earlier.cut?.queued) && x.episode == null && ys) {
+  // A whole-season ask has no span, but when the season's first part is
+  // already queued the bot hands it the rest: Breaking Bad "S02" asked twice
+  // an hour apart was flagged a repeat though the second row queued
+  // "S02E11-E13" (2026-11-06). The row's detail says which episodes it got.
+  const got = later.detail && !ys ? /^S\d+E(\d+)(?:\s*[–-]\s*E?(\d+))?/.exec(String(later.detail)) : null;
+  if (Array.isArray(earlier.cut?.queued) && x.episode == null && (ys || got)) {
     const parts = (Array.isArray(earlier.cut.parts) ? earlier.cut.parts : []).filter(Array.isArray);
-    const told = !y.list && parts.some(([a, b]) => ys[0] === Number(a) && ys[1] === Number(b));
+    const lo = ys ? ys[0] : Number(got[1]);
+    const hi = ys ? ys[1] : Number(got[2] ?? got[1]);
+    const told = !y.list && parts.some(([a, b]) => lo === Number(a) && hi === Number(b));
     const asked = new Set([...tvEpisodes(earlier), ...withheldEpisodes(earlier)]);
-    const overlaps = (tvEpisodes(later) ?? []).some((n) => asked.has(n));
+    const mine = ys ? tvEpisodes(later) ?? [] : Array.from({ length: Math.max(0, Math.min(hi - lo + 1, 1000)) }, (_, i) => lo + i);
+    const overlaps = mine.some((n) => asked.has(n));
     if (told || !overlaps) return false;
   }
   // A list is the episodes it names, not the span from its first to its
