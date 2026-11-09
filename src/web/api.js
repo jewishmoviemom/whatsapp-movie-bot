@@ -1327,6 +1327,22 @@ export function createApiRouter({ configStore, bot, queue, linkQueue = null, plu
     res.status(ok ? 200 : 404).json({ ok });
   });
 
+  // Unmark a waiting extra request: a courtesy, so it goes in order with
+  // the members' first requests (queue.courtesy; the operator, 2026-11-09).
+  router.post('/queue/:id/courtesy', guard, (req, res) => {
+    const done = queue.courtesy(req.params.id);
+    if (!done) return res.status(409).json({ ok: false, error: 'It is not a waiting extra request' });
+    const name = done.kind === 'tv' ? 'tv-requests' : 'movie-requests';
+    const p = pluginManager.plugins.get(name);
+    let kept = false;
+    try { kept = !!p?.plugin?.markCourtesy?.(p.ctx, done.key); } catch (err) {
+      logger.warn(`could not journal the courtesy for "${done.label}": ${err.message}`);
+    }
+    audit(req, `unmarked "${done.label}" as an extra - it goes in order with first requests`,
+      `${done.wasRank > 1 ? `was extra (rank ${done.wasRank})` : 'was a first request already'}${kept ? '' : '; not journalled - a restart makes it an extra again'}`, res);
+    res.json({ ok: true, kept });
+  });
+
   router.post('/queue/:id/move', guard, (req, res) => {
     const dir = req.body?.dir;
     const job = queue.describe(req.params.id);

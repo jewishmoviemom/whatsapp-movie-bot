@@ -3149,12 +3149,14 @@ export default {
       }
       list.push({
         key: r.reqKey,
+        kind: 'tv',
         // As the request's group will carry it (_groupOf): its member, its
         // requester, which says whether it came from the panel, and whether
         // it was asked for inside the member's cooldown.
         meta: {
           memberKey: r.memberKey ?? null, requester: r.requester ?? null,
           ...(r.insideCooldown ? { insideCooldown: r.insideCooldown } : {}),
+          ...(r.courtesy ? { courtesy: true } : {}),
         },
         at: Number(r.baseRow?.at) || null,
         started,
@@ -3655,6 +3657,21 @@ export default {
    * and comes back as "Outer Banks S05E08–E09"; one journalled before then
    * still ends in "episode(s)".
    */
+  /**
+   * An admin unmarked this waiting request as an extra (queue.courtesy, from
+   * the panel): journalled, so it is still a first request after a restart
+   * (_groupOf, _expectBack). Answers whether the request was found.
+   */
+  markCourtesy(ctx, reqKey) {
+    if (!reqKey) return false;
+    const pending = ctx.store.get('pending', []) ?? [];
+    const entry = pending.find((r) => r.reqKey === reqKey);
+    if (!entry) return false;
+    entry.courtesy = true;
+    ctx.store.set('pending', pending);
+    return true;
+  },
+
   _groupOf(req, ep, extra = {}) {
     return {
       group: req.reqKey,
@@ -3671,6 +3688,8 @@ export default {
         ...(req.memberKey ? { memberKey: req.memberKey } : {}),
         // And an extra asked for inside their cooldown stays one (_runSeason).
         ...(req.insideCooldown ? { insideCooldown: req.insideCooldown } : {}),
+        // And one an admin unmarked as an extra stays a first (markCourtesy).
+        ...(req.courtesy ? { courtesy: true } : {}),
         ...extra, ...(req.route?.beta ? { beta: true } : {}),
       },
     };

@@ -76,6 +76,35 @@ function fromPanel(meta) {
  * (_nextEligibleIndex) follows it, so a number on a requester's message is
  * the place the request really has.
  *
+ * EACH KIND COUNTS ON ITS OWN (2026-11-09). With strict movie priority films
+ * and TV are two lines that never mix: no episode starts while a film waits.
+ * A member's waiting TV request made their film a second request all the
+ * same, and every first film asked for after it went ahead: Mia's A
+ * Cinderella Story: Once Upon a Song, asked for at 15:52 New York time on
+ * 2026-11-08 with her Dick Van Dyke Show episodes waiting since 13:17, sat
+ * at 🔢 and then 3️⃣ 2️⃣ 3️⃣ 4️⃣ while seven films asked for after it started,
+ * one in a slot that had stood free - and the episodes could not start
+ * before the films anyway. The operator: "being that TV reqs always go
+ * after films, her film request should have joined the queue in order". So
+ * with strict movie priority a request is ranked against its member's
+ * requests of the same kind only (_baseRank); without it, against all.
+ *
+ * TV TAKES TURNS (2026-11-09). A season that had started kept every one of
+ * its remaining episodes ahead of every TV request that had not, so with a
+ * few long requests running a member could wait hours for one episode -
+ * on 2026-11-08 about 13 requests, 80 to 99 episodes, were waiting. The
+ * operator: "each request gets episode 1 right away and if there are
+ * multiple shows (with no movies ahead in queue) the remaining episodes
+ * should get bumped to 1 persons request after the other". So when an
+ * episode may start (films first, as ever), a TV request nothing of which
+ * has started goes first, in the order of the waiting line, and gets its
+ * first episode - unless its member has a TV request running, which it
+ * waits behind as before (a second season, the next part of a request cut
+ * at the episode cap); with none left, the running requests take turns, one
+ * episode each, the one whose last episode started longest ago next
+ * (_pickTv). A film is never held for it, and the waiting line - the place
+ * numbers - is unchanged: it is still the order the requests start in.
+ *
  * INSIDE THE COOLDOWN. The count alone made a member's request a first one
  * whenever their previous one had left the queue - finished, or forgotten
  * by a restart - however soon after it they asked. The operator
@@ -128,7 +157,7 @@ function fromPanel(meta) {
 export class JobQueue extends EventEmitter {
   constructor({
     concurrency = 1, maxLength = 50, strictMoviePriority = true, reserveSlotForMovies = true,
-    fairShare = false, extraFilmHoldMs = 0, clock = null,
+    fairShare = false, extraFilmHoldMs = 0, rankByKind = false, tvTakeTurns = false, clock = null,
   } = {}) {
     super();
     // Movies always go first: no TV episode starts while any movie is waiting
@@ -143,6 +172,11 @@ export class JobQueue extends EventEmitter {
     // cooldown timer ends, once timer ends they can jump the tv episodes".
     this.fairShare = !!fairShare;
     this.extraFilmHoldMs = Math.max(0, Number(extraFilmHoldMs) || 0);
+    // EACH KIND COUNTS ON ITS OWN and TV TAKES TURNS (the class comment).
+    // Off here, as fairShare is, so a queue built without the config (the
+    // tests) is the old one; the config turns both on.
+    this.rankByKind = !!rankByKind;
+    this.tvTakeTurns = !!tvTakeTurns;
     // The clock, which a test replaces to move time on without waiting. A
     // hold ends with no event of its own, so the queue sets a timer for it
     // (_armHold); the timer functions are the clock's for the same reason.
@@ -205,16 +239,20 @@ export class JobQueue extends EventEmitter {
       const raw = x.meta?.memberKey;
       const exempt = raw == null || raw === '' || fromPanel(x.meta);
       const at = Number(x.at);
+      const kind = x.kind === 'tv' ? 'tv' : 'movie';
       this._expected.set(String(x.key), {
         member: exempt ? null : String(raw),
+        kind,
         at: at > 0 ? Math.min(at, now) : now,
         started: !!x.started,
         label: x.label ?? String(x.key),
-        token: { dropped: false },
+        token: { dropped: false, kind },
         // Asked for inside its member's cooldown (see the class comment):
         // still an extra once it is back, whatever the job it comes back as
         // carries.
         insideCooldown: !exempt && !!x.meta?.insideCooldown,
+        // An admin made it a first request (courtesy()): still one once back.
+        courtesy: !exempt && !!x.meta?.courtesy,
       });
     }
     this._drain();
@@ -479,8 +517,10 @@ export class JobQueue extends EventEmitter {
     if (back) this._expected.delete(key);
     const at = back?.at ?? this._clock.now();
     const cooled = !exempt && !!(back?.insideCooldown || job.groupMeta?.insideCooldown || job.meta?.insideCooldown);
+    const kind = job.kind === 'tv' ? 'tv' : 'movie';
+    const courtesy = !exempt && !!(back?.courtesy || job.groupMeta?.courtesy || job.meta?.courtesy);
     return {
-      member, exempt, retry: !!job.retry, pin: null, at, token: back?.token ?? { dropped: false },
+      member, exempt, kind, ...(courtesy ? { courtesy: true } : {}), retry: !!job.retry, pin: null, at, token: back?.token ?? { dropped: false, kind },
       before: exempt ? [] : this._tokensOf(member, at),
       ...(cooled ? { insideCooldown: true } : {}),
     };
@@ -525,9 +565,15 @@ export class JobQueue extends EventEmitter {
   _baseRank(rec) {
     const f = rec?.fair;
     if (!f || f.exempt || !f.member) return 1;
+    // An admin's courtesy (courtesy()): a first request, whatever the count.
+    if (f.courtesy) return 1;
     if (f.frozen != null) return f.frozen;
+    // With strict movie priority, only the member's requests of the same
+    // kind count (see the class comment): a film and a season are in lines
+    // that never mix. A token from before kinds were recorded counts.
+    const sameKind = (t) => !this.rankByKind || !this.strictMoviePriority || !t.kind || !f.kind || t.kind === f.kind;
     let n = 1;
-    for (const t of f.before) if (!t.dropped) n += 1;
+    for (const t of f.before) if (!t.dropped && sameKind(t)) n += 1;
     return f.insideCooldown ? Math.max(2, n) : n;
   }
 
@@ -765,16 +811,56 @@ export class JobQueue extends EventEmitter {
   }
 
   /** Change the fair-order settings (src/index.js, when the config changes). */
-  setFairShare({ fairShare = this.fairShare, extraFilmHoldMs = this.extraFilmHoldMs } = {}) {
+  setFairShare({
+    fairShare = this.fairShare, extraFilmHoldMs = this.extraFilmHoldMs,
+    rankByKind = this.rankByKind, tvTakeTurns = this.tvTakeTurns,
+  } = {}) {
     const on = !!fairShare;
     const ms = Math.max(0, Number(extraFilmHoldMs) || 0);
-    if (on === this.fairShare && ms === this.extraFilmHoldMs) return false;
+    if (on === this.fairShare && ms === this.extraFilmHoldMs
+      && !!rankByKind === this.rankByKind && !!tvTakeTurns === this.tvTakeTurns) return false;
     this.fairShare = on;
     this.extraFilmHoldMs = ms;
+    this.rankByKind = !!rankByKind;
+    this.tvTakeTurns = !!tvTakeTurns;
     // It reorders the waiting line, so the panel and every place-in-line
     // reaction are told now; and a film whose hold is lifted may start.
     this._wake();
     return true;
+  }
+
+  /**
+   * Unmark a waiting extra request: an admin's courtesy, from the panel. The
+   * operator, 2026-11-09: "in admin panel I should have option to unmark
+   * items as extra (for a case like Mia that I want to give courtesy)".
+   * It is ranked as its member's first request from now on (_baseRank) -
+   * in its place among the first requests by when it was asked for, and no
+   * longer held behind the TV - and it still counts against the member's
+   * later requests, as a first one does. Nothing else moves.
+   *
+   * Answers null when `id` is not a waiting request the fair order ranks,
+   * else { key, kind, label, wasRank }: `key` is the request's journal key
+   * (the film's jobKey, the season's request key), so the plugin can keep
+   * the courtesy across a restart (the job's meta `courtesy`, which _fairFor
+   * and expectBack read).
+   */
+  courtesy(id) {
+    const key = this._keyOf(id);
+    const it = key == null ? null : this._items().waiting.find((x) => x.key === key);
+    if (!it) return null;
+    const rec = this._recOfItem(it);
+    const f = rec?.fair;
+    if (!f || f.exempt || !f.member) return null;
+    const wasRank = this._baseRank(rec);
+    f.courtesy = true;
+    // An admin's earlier move kept its rank then (_keepLine); a courtesy is
+    // newer, and wins.
+    if (f.frozen != null) f.frozen = 1;
+    if (f.pin != null && !f.moved) f.pin = 1;
+    if (rec.meta) rec.meta = { ...rec.meta, courtesy: true };
+    this._wake();
+    const journal = it.group ? it.key : (it.pending[0]?.meta?.jobKey ?? null);
+    return { key: journal, kind: it.kind, label: it.group?.label ?? it.pending[0]?.label ?? 'request', wasRank };
   }
 
   /** Stop the hold timer, for good: the process is shutting down. */
@@ -1162,7 +1248,47 @@ export class JobQueue extends EventEmitter {
       return -1;
     }
 
-    return 0;                                             // movies all clear - TV may run
+    return this.pending.indexOf(this._pickTv(this.pending));  // movies all clear - TV takes turns
+  }
+
+  /**
+   * Which TV job starts next, of `seq` (the waiting jobs in the order they
+   * would start): see TV TAKES TURNS in the class comment. A request nothing
+   * of which has started gets its first episode before any running request
+   * gets another - unless its member has one running already; then the
+   * running requests take turns, the one whose last episode started longest
+   * ago first, and a request's own episodes go in their order. Null when no
+   * TV job is waiting.
+   */
+  _pickTv(seq) {
+    const tv = seq.filter((e) => e.kind === 'tv');
+    if (!tv.length) return null;
+    if (!this.tvTakeTurns) return tv[0];
+    // Turns are a member's, not a request's: a member's season 2, the next
+    // part of a request cut at the episode cap, a second show - each waits
+    // behind the member's request that is running, as it always has, and
+    // does not take a first-episode turn of its own.
+    const whose = (e) => {
+      const g = e.group ? this.groups.get(e.group) : null;
+      const f = (g ?? e).fair;
+      return f && !f.exempt && f.member ? `m:${f.member}` : `r:${e.group ?? e.id}`;
+    };
+    const busy = new Set();
+    for (const e of [...this.active.values(), ...tv]) {
+      if (e.kind === 'tv' && !this._waitingJob(e)) busy.add(whose(e));
+    }
+    const fresh = tv.find((e) => this._waitingJob(e) && !busy.has(whose(e)));
+    if (fresh) return fresh;
+    let best = null;
+    let bestAt = Infinity;
+    for (const e of tv) {
+      if (this._waitingJob(e)) continue;
+      const g = e.group ? this.groups.get(e.group) : null;
+      // Never started in this process (put back after a restart): first.
+      const last = g?.lastTurn ?? 0;
+      if (last < bestAt) { best = e; bestAt = last; }
+    }
+    return best ?? tv[0];
   }
 
   /**
@@ -1180,7 +1306,7 @@ export class JobQueue extends EventEmitter {
     if (film) return at(film);
     if ([...this.active.values()].some((e) => e.kind !== 'tv')) return -1;
     if (this.reserveSlotForMovies && this.concurrency > 1 && this.active.size >= this.concurrency - 1) return -1;
-    return at(seq.find((e) => e.kind === 'tv') ?? seq[0]);
+    return at(this._pickTv(seq) ?? seq[0]);
   }
 
   /**
@@ -1411,6 +1537,10 @@ export class JobQueue extends EventEmitter {
     entry.abort = new AbortController();
     this.active.set(entry.id, entry);
     const g = entry.group ? this.groups.get(entry.group) : null;
+    // When this request last had a job start, as a count rather than a time
+    // (two can start in one millisecond), for the TV's turns (_pickTv).
+    this._turns = (this._turns ?? 0) + 1;
+    if (g) g.lastTurn = this._turns;
     if (g && !g.startedAt) {
       g.startedAt = entry.startedAt;
       if (this.fairShare) this._keepRunningAhead(g.key);

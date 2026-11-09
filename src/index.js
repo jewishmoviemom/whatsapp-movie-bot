@@ -120,6 +120,8 @@ async function main() {
     // (the film cooldown): src/core/queue.js, the class comment.
     fairShare: config.queue?.fairShare === true,
     extraFilmHoldMs: (config.movieRequests?.cooldownSecondsPerUser ?? 0) * 1000,
+    rankByKind: config.queue?.rankByKind !== false,
+    tvTakeTurns: config.queue?.tvTakeTurns !== false,
   });
   // So the panel can show, and change, which running job gets the encoder
   // (or the download or upload slot) next.
@@ -287,10 +289,15 @@ async function main() {
     pluginManager.dispatchMessage(msg).catch((err) => logger.error(`dispatch: ${err.message}`));
   });
 
+  const ACTIVITY_EVENTS = 2000;
   // Persist the group admin activity feed (joins/leaves/removals/promotions).
   const activity = stateStore.namespace('group-activity');
   bot.on('group-event', (ev) => {
-    activity.push('events', ev, 500);
+    // 2,000 events, about four weeks at November 2026's rate: the members'
+    // join history in the panel, and the film plugin's "did they join the
+    // posts group after it was posted?" (movie-requests/recent-post.js), which
+    // needs at least a week. 500 went back a week across every group.
+    activity.push('events', ev, ACTIVITY_EVENTS);
     const who = ev.actorNumber ? `+${ev.actorNumber}` : (ev.actor ?? 'someone');
     const tgt = ev.targets?.map((t) => t.number ? `+${t.number}` : t.jid).filter(Boolean).join(', ');
     logger.info(`👥 ${ev.groupName}: ${ev.action}${tgt ? ` ${tgt}` : ''}${ev.actor ? ` (by ${who})` : ''}`);
@@ -507,6 +514,8 @@ async function main() {
     queue.setFairShare({
       fairShare: cfg.queue?.fairShare === true,
       extraFilmHoldMs: (cfg.movieRequests?.cooldownSecondsPerUser ?? 0) * 1000,
+      rankByKind: cfg.queue?.rankByKind !== false,
+      tvTakeTurns: cfg.queue?.tvTakeTurns !== false,
     });
     log.level = { debug: 10, info: 20, warn: 30, error: 40 }[cfg.logging.level] ?? 20;
   });

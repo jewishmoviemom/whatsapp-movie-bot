@@ -693,6 +693,15 @@ export const DEFAULT_CONFIG = {
     // default stays off, so a queue built without this config (the tests)
     // is the old one. See src/core/queue.js.
     fairShare: true,
+    // With movies first, a request is ranked in the fair order against its
+    // member's requests of the same kind only: a waiting TV request does not
+    // make the member's film an extra (2026-11-09, queue.js EACH KIND COUNTS
+    // ON ITS OWN).
+    rankByKind: true,
+    // TV takes turns: each member's TV request gets its first episode before
+    // any running one gets another, then the running ones go one episode
+    // each in turn (2026-11-09, queue.js TV TAKES TURNS).
+    tvTakeTurns: true,
   },
 
   media: {

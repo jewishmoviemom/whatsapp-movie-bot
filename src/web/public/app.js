@@ -1304,6 +1304,7 @@ function renderReactionGuide(reactions, tvReactions) {
     ${row(r.added, 'Added to the queue')}
     ${row(r.duplicate, 'Already asked for — it is coming, not added twice')}
     ${row(pos, 'Your place in line (updates as it moves up)')}
+    ${row(r.positionOverflow || '\u{1f522}', `Further back than place ${(r.positions && r.positions.length) || 10} in line — it changes to your number once you are close`)}
     ${row(r.downloading, 'Downloading from the server')}
     ${row(r.converting, 'Converting to fit WhatsApp')}
     ${row(r.sending, 'Sending to the group')}
@@ -1512,6 +1513,7 @@ function renderQueue(q) {
           <button class="btn tiny" title="Move down" onclick="moveJob('${j.id}','down')" ${down ? '' : 'disabled'}>▼</button>
           <button class="btn tiny" title="${topTitle}" onclick="moveJob('${j.id}','top')"  ${up ? '' : 'disabled'}>⤒ next</button>
           <button class="btn tiny danger"${many ? ' title="Cancel the whole request"' : ''} onclick="cancelJob('${j.id}')">Cancel</button>
+          ${j.fair?.extra ? `<button class="btn tiny" title="A courtesy: count it as this member's first request, so it goes in order with everyone's first requests and is not held behind the TV" onclick="unmarkExtra('${j.id}')">Not extra</button>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -1549,6 +1551,19 @@ setInterval(() => {
     api('GET', '/queue').then(renderQueue).catch(() => {});
   }
 }, 5000);
+
+// Unmark a waiting extra request (queue.courtesy): the operator,
+// 2026-11-09, "for a case like Mia that I want to give courtesy".
+window.unmarkExtra = async (id) => {
+  try {
+    const r = await api('POST', `/queue/${id}/courtesy`);
+    toast(r?.kept === false
+      ? 'No longer an extra — but it could not be saved, so a restart would make it one again'
+      : 'No longer an extra — it goes in order with first requests', r?.kept === false);
+  } catch (err) {
+    if (!err?.handled) toast(err.message, true);
+  }
+};
 
 window.cancelJob = async (id) => {
   await api('DELETE', `/queue/${id}`);
@@ -5917,6 +5932,8 @@ function loadTvSection() {
   $('f-tv-prefix').checked = !!tv.requirePrefix;
   $('f-queue-priority').checked = CONFIG?.queue?.strictMoviePriority !== false;
   $('f-queue-fair').checked = CONFIG?.queue?.fairShare === true;
+  $('f-queue-bykind').checked = CONFIG?.queue?.rankByKind !== false;
+  $('f-queue-tvturns').checked = CONFIG?.queue?.tvTakeTurns !== false;
   renderTvGroupPickers();
 }
 
@@ -5940,7 +5957,10 @@ $('tv-save')?.addEventListener('click', async () => {
         cooldownOnlyWhenOthersWait: $('f-tv-cooldown-others').checked,
         requirePrefix: $('f-tv-prefix').checked,
       },
-      queue: { strictMoviePriority: $('f-queue-priority').checked, fairShare: $('f-queue-fair').checked },
+      queue: {
+        strictMoviePriority: $('f-queue-priority').checked, fairShare: $('f-queue-fair').checked,
+        rankByKind: $('f-queue-bykind').checked, tvTakeTurns: $('f-queue-tvturns').checked,
+      },
     });
     const tv = CONFIG.tvRequests ?? {};
     const warn = tv.enabled && (!tv.requestGroups?.length || !tv.postsGroups?.length)

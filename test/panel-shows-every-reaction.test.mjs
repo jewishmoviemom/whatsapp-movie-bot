@@ -47,11 +47,15 @@ const mr = { ...mark(movie, 0x1F400), positions: ['P1', 'P2', 'P3'] };
 const tr = mark(tv, 0x1F600);
 render(mr, tr);
 for (const k of movie) {
-  if (k === 'positions' || k === 'positionOverflow') continue;
+  // The numbers have a row of their own below. 🔢, past the end of them, was
+  // left out of this loop and of the guide until the operator noticed
+  // (2026-11-09: "🔢 11th or further back in queue is not listed in panel").
+  if (k === 'positions') continue;
   ok(box.innerHTML.includes(mr[k]), `movie ${k} has a row`);
 }
 for (const k of tv) ok(box.innerHTML.includes(tr[k]), `tv ${k} has a row`);
 ok(box.innerHTML.includes('P1 P2 P3'), 'the place-in-line numbers have a row');
+ok(/Further back than place 3 in line/.test(box.innerHTML), 'and 🔢 says it means further back than the numbers go');
 
 render(mr, undefined);
 ok(box.innerHTML.includes(mr.needYear) && !/undefined/.test(box.innerHTML),

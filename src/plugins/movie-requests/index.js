@@ -17,6 +17,8 @@ import { stageSems, sizeSems, STAGE_PRIORITY, waitReason } from '../../media/sta
 import { rulesReplyFor } from './rules.js';
 import { checkMessage, violationNotice } from './enforcement.js';
 import { applyGroupTag } from '../../core/group-tag.js';
+import { newsSettings } from '../../core/library-news.js';
+import { lastPosted, judgeRepost, joinedAt, postedWhen, repostReply } from './recent-post.js';
 import { recordWanted, resolveWanted, wantedKey, BOT } from '../../core/wanted.js';
 import { recordMiss, resolveMiss } from '../../core/library-misses.js';
 import { isOverridden, describeOverride } from '../../core/rating-overrides.js';
@@ -549,6 +551,57 @@ export default {
    * again once, were eight reactions at every start where they had been
    * four, and a crash loop repeats them (found in review, 2026-10-11).
    */
+  /**
+   * An admin unmarked this waiting film as an extra (queue.courtesy, from the
+   * panel): kept in its journal entry's meta, which the queue is given back
+   * after a restart (_expectBack, and the job's meta), so it stays a first
+   * request. Answers whether the entry was found.
+   */
+  markCourtesy(ctx, jobKey) {
+    if (!jobKey) return false;
+    const pending = ctx.store.get('pending', []) ?? [];
+    const entry = pending.find((p) => p.jobKey === jobKey);
+    if (!entry) return false;
+    entry.meta = { ...(entry.meta ?? {}), courtesy: true };
+    ctx.store.set('pending', pending);
+    return true;
+  },
+
+  /**
+   * Was this film posted lately enough to refuse it (recent-post.js)? Null to
+   * queue it as usual; else { detail, reply, groupMentions } - `reply` (null
+   * within 24 hours) goes to the request group the message came from, never
+   * to the member privately.
+   */
+  _recentPost(ctx, { msg, movie, record, route }) {
+    const isStaff = ctx.bot.isGroupAdmin?.(msg.chatJid, { jid: msg.senderJid, number: msg.senderNumber }) ?? false;
+    if (isStaff) return null;
+    const last = lastPosted(ctx.store.get('history', []) ?? [], movie, record.quality ?? null);
+    if (!last) return null;
+    const postsGroup = route?.postsGroup ?? ctx.config.movieRequests?.postsGroup ?? null;
+    const events = ctx.peerStore?.('group-activity')?.get('events', []) ?? [];
+    const joined = postsGroup ? joinedAt(events, postsGroup, { jid: msg.senderJid, number: msg.senderNumber }) : null;
+    let filmsWaiting = false;
+    try { filmsWaiting = (ctx.queue.snapshot?.().pending ?? []).some((e) => e.kind !== 'tv'); } catch { /* none known */ }
+    const now = Date.now();
+    const v = judgeRepost({ postedAt: last.at, now, joinedAt: joined, filmsWaiting });
+    const when = postedWhen(last.at, 'America/New_York');
+    if (v.go) {
+      ctx.log.info(`"${movie.title}" was posted ${when}, queued anyway: ${v.why}`);
+      return null;
+    }
+    ctx.log.info(`"${movie.title}" was posted ${when}: not sent again (${v.why})`);
+    const detail = `already posted ${when} (New York) - ${v.why}`;
+    if (!v.tell) return { detail, reply: null, groupMentions: null };
+    // The discussions group (libraryNews.groups), tagged where WhatsApp
+    // allows it, named otherwise.
+    const disc = [...newsSettings(ctx.config).groups][0] ?? null;
+    const reply = (where) => repostReply({ title: movie.title, year: movie.year, at: last.at, timeZone: 'America/New_York', where });
+    if (!disc || !ctx.bot.groupCache?.get?.(disc)?.subject) return { detail, reply: reply('the discussions group'), groupMentions: null };
+    const { body, groupMentions } = applyGroupTag(ctx.bot, { body: reply('{group}'), notifyGroup: msg.chatJid, tagGroup: disc });
+    return { detail, reply: body, groupMentions };
+  },
+
   _resendPlace(ctx, jobKey) {
     if (!jobKey) return null;
     const entry = (ctx.store.get('pending', []) ?? []).find((p) => p.jobKey === jobKey);
@@ -692,7 +745,7 @@ export default {
       try { started = this._startOf(ctx, p) != null; } catch (err) {
         ctx.log?.warn?.(`could not tell whether "${p.movie?.title}" had started: ${err.message}`);
       }
-      list.push({ key: p.jobKey, meta: p.meta ?? null, at: Number(p.at) || null, started, label: filmLabel(p.movie ?? {}) });
+      list.push({ key: p.jobKey, kind: 'movie', meta: p.meta ?? null, at: Number(p.at) || null, started, label: filmLabel(p.movie ?? {}) });
     }
     try { ctx.queue.expectBack(list); } catch (err) { ctx.log?.warn?.(`could not tell the queue what comes back: ${err.message}`); }
   },
@@ -3713,6 +3766,21 @@ export default {
     const waitingFor = testing ? null : route;
     const early = this._filmWaiting(ctx, movie, waitingFor, record.quality);
     if (early) return this._duplicateFilm(ctx, { msg, record, movie, route, react, twin: early });
+
+    // Posted already, lately? The operator's rule of 2026-11-09
+    // (recent-post.js): 🤥 within 24 hours; within a week, unless the member
+    // joined the posts group after it went out or no film is waiting, 🤥
+    // and a reply here saying when. Never for a test, nor an admin's request.
+    if (!testing) {
+      const repost = this._recentPost(ctx, { msg, movie, record, route });
+      if (repost) {
+        if (repost.reply) {
+          try { await ctx.bot.sendText(msg.chatJid, repost.reply, { quoted: msg, groupMentions: repost.groupMentions }); }
+          catch (err) { ctx.log.warn(`could not reply about the earlier post: ${err.message}`); }
+        }
+        return finish('already-posted', repost.detail, cfg.reactions.duplicate);
+      }
+    }
 
     /* --------- 4c. The bypass list, and what the AI check can clear -- */
     //

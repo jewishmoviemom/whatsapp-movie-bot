@@ -711,6 +711,10 @@
         <label class="check"><input type="checkbox" id="f-queue-priority"> <b>Movies always before TV</b> <span class="hint">recommended — uncheck to run in plain arrival order</span></label>
         <label class="check"><input type="checkbox" id="f-queue-fair"> <b>Fair queue</b>
           <span class="hint">takes turns between members: everyone's first request goes before anyone's second, so each person who asks for one thing goes ahead of someone else's extra requests, however many come. An extra film also waits behind the TV until the film cooldown has passed since it was asked for. Items queued from the panel count as a first request, so they are never bumped back and go ahead of extra requests already waiting. Once you move an item with the arrows, the line keeps the order you leave it in</span></label>
+        <label class="check"><input type="checkbox" id="f-queue-bykind"> <b>Films and TV counted apart</b>
+          <span class="hint">with movies before TV: a member's waiting TV request does not make their film an extra, and their films do not make their TV request one</span></label>
+        <label class="check"><input type="checkbox" id="f-queue-tvturns"> <b>TV takes turns</b>
+          <span class="hint">when no film is waiting, each member's TV request gets its first episode before a running one gets another, then the running requests go one episode each in turn. A member's second TV request waits behind their first</span></label>
         <p class="hint" style="margin-top:10px">TV rating overrides — episodes sent despite a TV-MA or other blocked rating — are on the same list as films: <b>Movies → Request rules → Rated-R override</b>. A title there covers the show and film of exactly that name; an episode it covers is sent with no AI check.</p>
         <button class="btn small primary" id="tv-save" style="margin-top:12px">Save TV settings</button>
         <span id="tv-save-note" class="muted small"></span>

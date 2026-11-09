@@ -174,12 +174,17 @@ console.log('=== the incident: the same film asked for again while it waits is n
   await moviePlugin.onMessage(ask('minority report 2002'), ctx);
   ok(jobs.length === 1, 'while it is being made, too');
 
-  // Posted: nothing is waiting any more, and asking again is a new request.
+  // Posted: nothing is waiting any more. Asking again was a new request
+  // until 2026-11-09, when the operator made the re-post decision: within
+  // 24 hours of the post it is 🤥 and not queued (recent-post.js,
+  // test/film-recently-posted.test.mjs has the rest of the rule).
   ctx.queue.active.clear();
   await jobs[0].run(job());
   ok(out.some((e) => e.op === 'document' && e.jid === POSTS) && !store.data.pending.length, 'the first copy is posted');
-  await moviePlugin.onMessage(ask('minority report 2002'), ctx);
-  ok(jobs.length === 2, 'once it is posted, asking again queues it again (a re-post is somebody else\'s decision)');
+  const after = ask('minority report 2002', { who: 'Mommy' });
+  await moviePlugin.onMessage(after, ctx);
+  ok(jobs.length === 1 && rowOf(store, after.id)?.status === 'already-posted',
+    'asked for again just after it was posted: not queued again, History says already-posted');
 }
 
 console.log('=== with the notice on, the line says what happened ===');
