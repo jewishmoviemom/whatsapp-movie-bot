@@ -78,7 +78,7 @@ const logger = log.scope('api');
 const RUNNING_COMMIT = runningCommit();
 const STARTED_AT = processStartedAt();
 
-export function createApiRouter({ configStore, bot, queue, linkQueue = null, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover = null, contentHealth = null, spareLinker = null, requestPause = null, wantedRecheck = null, discordWatch = null, arrivals = null }) {
+export function createApiRouter({ configStore, bot, queue, linkQueue = null, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover = null, contentHealth = null, spareLinker = null, requestPause = null, wantedRecheck = null, discordWatch = null, arrivals = null, outage = null }) {
   const router = express.Router();
   const guard = requireAuth(configStore);
   const superGuard = requireSuperAdmin(configStore);
@@ -1302,6 +1302,15 @@ export function createApiRouter({ configStore, bot, queue, linkQueue = null, plu
       : `resumed requests${r.resumedQueue ? ' and the queue' : ''}`,
     held ? `running the ${held} held request(s), in the order they came` : 'none were held', res);
     res.json({ ok: true, already: !!r.already, ran: held, ...requestPause.snapshot() });
+  });
+  // The media server down (src/core/server-outage.js): "Check now" asks it
+  // once, and leaves the every-10-minutes schedule as it was.
+  router.post('/outage/check', guard, async (req, res) => {
+    if (!outage) return res.status(503).json({ error: 'The outage watch is not running here.' });
+    const was = outage.isDown();
+    await outage.check({ manual: true });
+    audit(req, 'checked the media server (Check now)', was ? (outage.isDown() ? 'still down' : 'back up - resuming') : 'it was not down', res);
+    res.json({ ok: true, outage: outage.snapshot() });
   });
   router.post('/queue/clear', guard, (req, res) => {
     const labels = queue.pendingLabels();

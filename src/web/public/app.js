@@ -1342,9 +1342,40 @@ function pauseWhen(t) {
     : fmtDateTime(t, { ...HM, month: 'short', day: 'numeric' });
 }
 
+/**
+ * The media server down (src/core/server-outage.js): "Media server
+ * unreachable since HH:MM · next check HH:MM · N items held", on the
+ * dashboard and over the queue, with Check now. The operator, 2026-11-15.
+ */
+function outageLine(o) {
+  return `Media server unreachable since ${pauseWhen(o.since)} \u00b7 next check ${pauseWhen(o.nextCheck)} \u00b7 ${o.held ?? 0} item${o.held === 1 ? '' : 's'} held`;
+}
+
+function renderOutage(o) {
+  const down = !!o?.down;
+  const card = $('card-server-down');
+  if (card) {
+    card.classList.toggle('hidden', !down);
+    $('server-down-line').textContent = down ? outageLine(o) : '';
+    $('server-down-sub').textContent = down
+      ? `${o.lastWhy || o.reason || ''}${o.checks ? ` \u00b7 ${o.checks} check${o.checks === 1 ? '' : 's'} so far` : ''}. `
+        + 'Nothing new starts and nothing else contacts the server; new requests are held. '
+        + 'When it answers, what it held resumes, in order. A queue or requests you paused by hand stay paused.'
+      : '';
+    const b = $('btn-outage-check');
+    if (b) { b.disabled = !!o?.checking; b.textContent = o?.checking ? 'Checking\u2026' : 'Check now'; }
+  }
+  const qn = $('queue-outage-note');
+  if (qn) {
+    qn.classList.toggle('hidden', !down);
+    qn.textContent = down ? `\u26d4 ${outageLine(o)}` : '';
+  }
+}
+
 function renderRequestPause(s) {
   if (!s) return;
   REQ_PAUSE = s;
+  renderOutage(s.outage);
   const btn = $('btn-req-pause');
   const card = $('card-req-paused');
   const held = s.held ?? 0;
@@ -1468,7 +1499,8 @@ function renderQueue(q) {
   // until the retry fires - after a delay, for WhatsApp to come back, or for
   // room on the disk. It used to show only as "failed" under Recently
   // finished, with nothing to cancel it by, and then be posted anyway.
-  const why = { delay: 'trying again shortly', connection: 'waiting for WhatsApp to reconnect', room: 'waiting for disk space' };
+  const why = { delay: 'trying again shortly', connection: 'waiting for WhatsApp to reconnect', room: 'waiting for disk space',
+    server: 'waiting for the media server to come back' };
   const retryRows = retrying.map((j) => `
       <div class="item">
         <div class="item-top">
@@ -1758,6 +1790,15 @@ async function addManual() {
 
 $('btn-pause').addEventListener('click', () => api('POST', '/queue/pause').then(() => toast('Paused')));
 $('btn-resume').addEventListener('click', () => api('POST', '/queue/resume').then(() => toast('Resumed')));
+$('btn-outage-check').addEventListener('click', async () => {
+  try {
+    const r = await api('POST', '/outage/check');
+    renderOutage(r.outage);
+    toast(r.outage?.down ? `Still unreachable \u2014 next check ${pauseWhen(r.outage.nextCheck)}` : 'The media server answers \u2014 resuming');
+  } catch (err) {
+    if (!err.handled) toast(err.message, true);
+  }
+});
 $('btn-req-pause').addEventListener('click', async () => {
   const resuming = !!REQ_PAUSE?.paused;
   try {

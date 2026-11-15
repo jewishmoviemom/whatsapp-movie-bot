@@ -306,8 +306,11 @@ export class WantedRecheck {
    */
   constructor({
     configStore, stateStore, log: lg = logger, everyMs = EVERY_MS, firstAfterMs = FIRST_AFTER_MS,
-    paceMs = PACE_MS, find = findInLibrary, wait = sleep, onRun = null, now = Date.now,
+    paceMs = PACE_MS, find = findInLibrary, wait = sleep, onRun = null, now = Date.now, serverDown = () => false,
   }) {
+    // The media server down (src/core/server-outage.js): a run is skipped,
+    // rather than one failed lookup per open film. The next one comes round.
+    this.serverDown = serverDown;
     this.configStore = configStore;
     this.stateStore = stateStore;
     this.log = lg;
@@ -357,6 +360,10 @@ export class WantedRecheck {
       if (!libraryReady(cfg?.library)) {
         this.log.debug?.(`wanted recheck (${why}): skipped - the library is not configured`);
         return { why, at, skipped: 'The library is not configured (Settings -> Library).', ...EMPTY() };
+      }
+      if (this.serverDown?.()) {
+        this.log.info?.(`wanted recheck (${why}): skipped - the media server is down`);
+        return { why, at, skipped: 'The media server is down; it is checked every 10 minutes.', ...EMPTY() };
       }
       const store = this.stateStore.namespace(NAMESPACE);
       // What was resolved over a month ago goes now. This is the bot's one

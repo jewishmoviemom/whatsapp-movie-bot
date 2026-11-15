@@ -641,6 +641,9 @@ input:disabled { opacity: .6; cursor: not-allowed; }
 /* Requests are paused from the panel (request-pause.js): every request gets
    ⏸️ and waits until Resume, so it is said where nobody can miss it. */
 .card.req-paused { border-left: 4px solid var(--warn); }
+.card.server-down { border-left: 4px solid var(--danger); }
+.server-down h2 { color: var(--danger); }
+.server-down #btn-outage-check { margin-top: 8px; }
 .req-paused h2 { color: var(--warn); }
 
 /* The nudity check is running, but on a fallback provider because the first

@@ -101,7 +101,8 @@ function fileSize(p) {
  * backstop still caps a member sending the same request over and over, as
  * it capped the duplicates those were (found in review, 2026-10-11).
  */
-const NOT_COUNTED = new Set(['cooldown', 'resent']);
+// 'held': the media server was down, and the request waits to run (server-outage.js).
+const NOT_COUNTED = new Set(['cooldown', 'resent', 'held']);
 
 /**
  * How long a member's next TV request waits for one of theirs still being
@@ -676,6 +677,16 @@ export default {
     const onQueued = lookup ? () => lookup.queued(ctx.store, { what: text, log: ctx.log, who: msg.senderJid }) : null;
     try {
       out = await this._runRequest(msg, text, ctx, { route, pass, onQueued, insideCooldown: cooled });
+      // The lookup failed because the media server went down
+      // (src/core/server-outage.js): held, ⏸️ and a reply, to run when it is
+      // back, rather than left on ⚠️. Only when nothing was queued, and never
+      // for a test.
+      if (out?.outcome === 'error' && !out.queued && !isTestRoute(route)
+        && await ctx.requestPause?.holdIfServerDown?.(ctx, msg, out.err ?? null, {
+          plugin: this.name, text, emoji: this._react(ctx).paused, extra: { pass },
+        })) {
+        out = { outcome: 'held' };
+      }
     } finally {
       lookup?.settle(ctx.store, {
         queued: out?.queued === true,
@@ -949,7 +960,7 @@ export default {
     } catch (err) {
       ctx.log.error(`TV lookup failed for "${text}": ${err.message}`);
       await react(R.failed);
-      return { outcome: 'error' };
+      return { outcome: 'error', err };
     }
     if (pass && !this._passFits(probe.series, pass)) return this._passRefused(ctx, msg, pass);
     // No such show. A show found with nothing in any of its seasons comes
@@ -1483,7 +1494,7 @@ export default {
     } catch (err) {
       ctx.log.error(`TV lookup failed for "${text}": ${err.message}`);
       await react(R.failed);
-      return { outcome: 'error' };
+      return { outcome: 'error', err };
     }
     if (pass && !this._passFits(found.series, pass)) return this._passRefused(ctx, msg, pass);
 

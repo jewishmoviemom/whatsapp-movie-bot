@@ -3437,6 +3437,12 @@ export default {
       });
     } catch (err) {
       ctx.log.error(`library lookup failed: ${err.message}`);
+      // The media server down (src/core/server-outage.js): the request is
+      // held, ⏸️ and a reply, and runs when the server is back, rather than
+      // answered ⚠️ and lost. A test, a pick or a re-run is answered as ever.
+      if (!testing && !pick && !rerun && await ctx.requestPause?.holdIfServerDown?.(ctx, msg, err, {
+        plugin: this.name, text, emoji: cfg.reactions?.paused,
+      })) return null;
       return finish('error', `library error: ${err.message}`, cfg.reactions.failed);
     }
 
