@@ -126,10 +126,53 @@ function toast(msg, bad = false) {
 /* ------------------------------ gate ------------------------------- */
 let CURRENT_USER = null;
 
+/**
+ * Tell the browser a sign-in worked, where it has a way to be told: the
+ * Credential Management API saves the login outright in Chrome, Edge, Opera
+ * and Samsung Internet, on every platform. Used where the sign-in or a new
+ * password went by fetch() - after a session ends, at first setup, and on a
+ * password change - since there no form is submitted for the browser to see.
+ * Elsewhere (Safari, Firefox) it is a no-op, and the real form post of a
+ * fresh sign-in (api.js, /auth/login-form) is what they save from.
+ */
+async function rememberLogin(id, password) {
+  if (!id || !password) return;
+  try {
+    if (window.PasswordCredential && navigator.credentials?.store) {
+      await navigator.credentials.store(new window.PasswordCredential({ id, password, name: id }));
+    }
+  } catch { /* a browser that declines is not an error */ }
+}
+
+/** What ?signin=… says, after a sign-in form post that did not sign in. */
+const SIGNIN_ERRORS = {
+  wrong: 'Wrong username or password',
+  limited: 'Too many attempts. Wait 15 minutes.',
+  refused: 'That sign-in did not come from this page. Try again here.',
+};
+
 async function boot() {
+  // Back from the sign-in form's post (api.js, /auth/login-form): read what
+  // it says, then take it out of the address bar, so a reload does not say
+  // it again.
+  const params = new URLSearchParams(location.search);
+  const signin = params.get('signin');
+  if (signin != null) {
+    params.delete('signin');
+    try { history.replaceState(history.state, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`); } catch { /* keep it */ }
+  }
+  let typedUser = null;
+  try { typedUser = sessionStorage.getItem('gate-user'); sessionStorage.removeItem('gate-user'); } catch { /* none */ }
   const status = await api('GET', '/auth/status');
+  if (!status.setupRequired && !status.authed) {
+    if (typedUser) $('gate-user').value = typedUser;
+    if (signin && SIGNIN_ERRORS[signin]) $('gate-err').textContent = SIGNIN_ERRORS[signin];
+  }
   if (status.setupRequired) {
     SETUP_MODE = true;
+    // The account made is "superadmin": in the form, so the saved login has
+    // its username (the field stays hidden, as there is nothing to choose).
+    $('gate-user').value = 'superadmin';
     $('gate-title').textContent = 'Set a super-admin password';
     $('gate-sub').textContent = 'First run — create the super-admin login (username is "superadmin"). At least 8 characters.';
     $('gate-user').classList.add('hidden');
@@ -186,6 +229,7 @@ $('chpw-gate-form').addEventListener('submit', async (e) => {
   if (next === cur) return bad('Choose a password different from the temporary one');
   try {
     await api('POST', '/auth/password', { current: cur, next });
+    rememberLogin(CURRENT_USER?.username ?? $('chpw-gate-user').value, next);
     TEMP_PASSWORD = null;
     CURRENT_USER = { ...CURRENT_USER, mustChangePassword: false };
     $('chpw-gate-form').reset();
@@ -209,6 +253,18 @@ function showGate() {
 }
 
 $('gate-form').addEventListener('submit', async (e) => {
+  // A fresh sign-in is the browser's own form post (api.js,
+  // /auth/login-form): the one thing every password manager on every
+  // browser saves from. The username is kept for the page that comes back,
+  // in case the password was wrong.
+  if (!SETUP_MODE && !gateShownForExpiry) {
+    try { sessionStorage.setItem('gate-user', $('gate-user').value.trim()); } catch { /* none */ }
+    $('gate-err').textContent = '';
+    $('gate-btn').textContent = 'Signing in\u2026';
+    return;
+  }
+  // After a session ends, the panel must not reload and lose what was on it,
+  // and the first setup needs its two passwords compared: both go by fetch().
   e.preventDefault();
   const pw = $('gate-pw').value;
   $('gate-err').textContent = '';
@@ -221,6 +277,7 @@ $('gate-form').addEventListener('submit', async (e) => {
       r = await api('POST', '/auth/login', { username: $('gate-user').value.trim(), password: pw });
     }
     CURRENT_USER = r.user ?? null;
+    rememberLogin(r.user?.username ?? $('gate-user').value.trim(), pw);
     if (r.user?.mustChangePassword) { showPasswordChange(r.user, pw); return; }
     $('gate').classList.add('hidden');
     gateShownForExpiry = false;
@@ -2463,7 +2520,8 @@ function scrollLog() {
 $('btn-log-clear').addEventListener('click', () => { logLines = []; renderLog(); });
 
 /* --------------------------- password ------------------------------ */
-$('btn-chpw').addEventListener('click', async () => {
+$('chpw-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
   const cur = $('f-pw-cur').value;
   const next = $('f-pw-new').value;
   const again = $('f-pw-new2').value;
@@ -2478,6 +2536,7 @@ $('btn-chpw').addEventListener('click', async () => {
 
   try {
     const r = await api('POST', '/auth/password', { current: cur, next });
+    rememberLogin(CURRENT_USER?.username, next);
     $('f-pw-cur').value = ''; $('f-pw-new').value = ''; $('f-pw-new2').value = '';
     $('pw-result').innerHTML = `<span style="color:var(--accent)">updated${
       r?.endedElsewhere ? ` — signed out ${r.endedElsewhere} other session${r.endedElsewhere === 1 ? '' : 's'}` : ''}</span>`;
@@ -3002,6 +3061,8 @@ $('ban-add')?.addEventListener('click', async () => {
 function applyUser() {
   const u = CURRENT_USER;
   $('who').textContent = u ? `${u.username}${u.role === 'superadmin' ? ' · super-admin' : ''}` : '';
+  // The username a password manager files the new password under (My account).
+  if ($('f-pw-user')) $('f-pw-user').value = u?.username ?? '';
   const isSuper = u?.role === 'superadmin';
   document.querySelectorAll('.superadmin-only').forEach((el) => el.classList.toggle('hidden', !isSuper));
   // The sign-out timeout is the super-admin's alone; the server refuses a plain

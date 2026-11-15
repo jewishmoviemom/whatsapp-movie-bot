@@ -34,11 +34,18 @@
       confirm field is disabled while hidden: two password inputs make a form
       look like a REGISTRATION form, which is why a saved login was not offered.
     -->
-    <form id="gate-form" method="post" action="#">
-      <input type="text" id="gate-user" name="username" placeholder="Username"
-             autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
-      <input type="password" id="gate-pw" name="password" placeholder="Password"
-             autocomplete="current-password" required>
+    <!--
+      And it is posted for real (action, method), not by fetch(): a password
+      manager offers to save a login when it sees the form submitted, and
+      Safari, Firefox and Samsung Internet see nothing else (api.js,
+      /auth/login-form). aria-label is what some managers read where there is
+      no visible label.
+    -->
+    <form id="gate-form" name="login" method="post" action="/api/auth/login-form">
+      <input type="text" id="gate-user" name="username" placeholder="Username" aria-label="Username" required
+             autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next">
+      <input type="password" id="gate-pw" name="password" placeholder="Password" aria-label="Password"
+             autocomplete="current-password" enterkeyhint="go" required>
       <input type="password" id="gate-pw2" name="confirm-password" class="hidden" disabled
              placeholder="Confirm password" autocomplete="new-password">
       <button type="submit" class="btn primary block" id="gate-btn">Sign in</button>
@@ -302,7 +309,7 @@
         <h2>OMDb <span id="ak-omdb-pill" class="pill">…</span></h2>
         <p class="hint">Identifies every request and reads the rating the gate depends on. Without it nothing is sent at all.</p>
         <label>OMDb API key <span class="hint">free key from omdbapi.com</span>
-          <input id="f-omdbkey" type="password" placeholder="not set" autocomplete="off">
+          <input id="f-omdbkey" type="password" placeholder="not set" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
         </label>
         <label class="check hidden" id="ak-omdb-removewrap"><input type="checkbox" id="ak-omdb-remove"> Remove the saved key</label>
         <div class="row gap wrap ak-actions">
@@ -317,7 +324,7 @@
         <h2>TMDB <span id="ak-tmdb-pill" class="pill">…</span></h2>
         <p class="hint">Turns the theatrical check from a guess into a definite answer — “still in cinemas, ask again later” rather than “we simply don’t have it”. Optional: without it the check falls back to release dates.</p>
         <label>TMDB API key <span class="hint">optional but recommended</span>
-          <input id="f-tmdbkey" type="password" placeholder="not set" autocomplete="off">
+          <input id="f-tmdbkey" type="password" placeholder="not set" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
         </label>
         <label class="check hidden" id="ak-tmdb-removewrap"><input type="checkbox" id="ak-tmdb-remove"> Remove the saved key</label>
         <div class="row gap wrap ak-actions">
@@ -334,7 +341,7 @@
         <h2>Gemini <span id="ak-gemini-pill" class="pill">…</span></h2>
         <p class="hint">Works out which film a paraphrase or half-remembered title meant when OMDb draws a blank, and reads the published content advisories for the nudity check. <b>The rating always comes from OMDb</b> — a model can only help a film its rating blocks through, never refuse one.</p>
         <label>Gemini API key
-          <input id="f-gemini-key" type="password" autocomplete="off" placeholder="AIza…">
+          <input id="f-gemini-key" type="password" autocomplete="off" placeholder="AIza…" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
         </label>
         <label class="check hidden" id="ak-gemini-removewrap"><input type="checkbox" id="ak-gemini-remove"> Remove the saved key</label>
         <label>Model
@@ -357,7 +364,7 @@
           <!-- type=password like the other three: this is the one key that is
                published inside every link, so leaving it legible on screen in
                a section about key hygiene was the odd one out. -->
-          <input id="f-dl-apikey" type="password" autocomplete="off" placeholder="paste a dedicated Jellyfin API key">
+          <input id="f-dl-apikey" type="password" autocomplete="off" placeholder="paste a dedicated Jellyfin API key" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
         </label>
         <label class="check hidden" id="ak-direct-links-removewrap"><input type="checkbox" id="ak-direct-links-remove"> Remove the saved key</label>
         <div class="row gap wrap ak-actions">
@@ -492,7 +499,7 @@
         <div id="dc-status" class="small muted">Loading…</div>
         <div class="superadmin-only" id="dc-connect-box">
           <label>Discord token <span class="hint">stored encrypted; never shown again, never logged</span>
-            <input id="dc-token" type="password" autocomplete="off" spellcheck="false" placeholder="paste the &quot;authorization&quot; value here">
+            <input id="dc-token" type="password" autocomplete="off" spellcheck="false" placeholder="paste the &quot;authorization&quot; value here" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
           </label>
           <details class="small" id="dc-howto">
             <summary>How to get the token</summary>
@@ -851,7 +858,7 @@
           <div class="jf-auth" data-jf="password">
             <div class="row gap wrap">
               <label class="flex1">Username<input id="f-jf-username" autocomplete="off"></label>
-              <label class="flex1">Password<input id="f-jf-password" type="password" placeholder="not set" autocomplete="new-password"></label>
+              <label class="flex1">Password<input id="f-jf-password" type="password" placeholder="not set" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></label>
             </div>
             <button class="btn small primary" id="btn-jf-login">Sign in to Jellyfin</button>
             <p class="hint">Your password is used once to obtain a token, then stored encrypted. The token renews itself if Jellyfin invalidates it.</p>
@@ -865,7 +872,7 @@
 
           <div class="jf-auth hidden" data-jf="apikey">
             <label>API key <span class="hint">Jellyfin → Dashboard → API Keys</span>
-              <input id="f-jf-key" type="password" placeholder="not set">
+              <input id="f-jf-key" type="password" placeholder="not set" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
             </label>
           </div>
 
@@ -874,11 +881,11 @@
         </div>
         <div class="lib-section hidden" data-lib="plex">
           <label>Server URL<input id="f-plex-url" placeholder="http://192.168.1.50:32400"></label>
-          <label>X-Plex-Token<input id="f-plex-token" type="password" placeholder="not set"></label>
+          <label>X-Plex-Token<input id="f-plex-token" type="password" placeholder="not set" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></label>
         </div>
         <div class="lib-section hidden" data-lib="http">
           <label>Search URL<input id="f-http-url" placeholder="https://host/api/find"></label>
-          <label>Auth header <span class="hint">e.g. Authorization: Bearer xyz</span><input id="f-http-auth" type="password"></label>
+          <label>Auth header <span class="hint">e.g. Authorization: Bearer xyz</span><input id="f-http-auth" type="password" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></label>
         </div>
         <div class="lib-section hidden" data-lib="local">
           <label>Folders <span class="hint">one per line</span><textarea id="f-local-roots" rows="3" placeholder="/mnt/media/Movies"></textarea></label>
@@ -1002,12 +1009,17 @@
       <div class="card">
         <h2>Password 🔑</h2>
         <p class="hint">Changing it signs out anyone else who is signed in as you — on any other device — so a password you think has leaked stops working everywhere.</p>
+        <!-- A form with the account's username in it, so a password manager
+             updates the right saved login rather than offering a new one. -->
+        <form id="chpw-form" method="post" action="#">
+        <input type="text" id="f-pw-user" name="username" autocomplete="username" readonly hidden>
         <div class="row gap wrap">
-          <label class="flex1">Current<input id="f-pw-cur" type="password" autocomplete="current-password"></label>
-          <label class="flex1">New <span class="hint">at least 8 characters</span><input id="f-pw-new" type="password" autocomplete="new-password"></label>
-          <label class="flex1">Confirm new<input id="f-pw-new2" type="password" autocomplete="new-password"></label>
+          <label class="flex1">Current<input id="f-pw-cur" name="current-password" type="password" autocomplete="current-password"></label>
+          <label class="flex1">New <span class="hint">at least 8 characters</span><input id="f-pw-new" name="new-password" type="password" autocomplete="new-password"></label>
+          <label class="flex1">Confirm new<input id="f-pw-new2" name="confirm-new-password" type="password" autocomplete="new-password"></label>
         </div>
-        <button class="btn small" id="btn-chpw">Update my password</button>
+        <button type="submit" class="btn small" id="btn-chpw">Update my password</button>
+        </form>
         <span id="pw-result" class="muted small"></span>
       </div>
       <div class="card">
@@ -1075,7 +1087,7 @@
 
         <div class="row gap wrap">
           <label class="flex1">Email address<input id="f-em-user" type="email" placeholder="you@gmail.com" autocomplete="off"></label>
-          <label class="flex1">App password<input id="f-em-pass" type="password" placeholder="not set" autocomplete="new-password"></label>
+          <label class="flex1">App password<input id="f-em-pass" type="password" placeholder="not set" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></label>
         </div>
         <label>Send alerts to <span class="hint">leave blank to send to yourself</span>
           <input id="f-em-to" type="email" placeholder="same as above">
@@ -1360,8 +1372,8 @@
         <div id="admins-list" class="list"></div>
         <h3>Add an admin</h3>
         <div class="row gap wrap">
-          <input id="na-user" placeholder="username" class="flex1">
-          <input id="na-pass" type="password" placeholder="password (8+ chars)" class="flex1">
+          <input id="na-user" placeholder="username" class="flex1" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
+          <input id="na-pass" type="password" placeholder="password (8+ chars)" class="flex1" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other">
           <select id="na-role"><option value="admin">admin</option><option value="superadmin">super-admin</option></select>
           <button class="btn small primary" id="na-add">Add</button>
         </div>
