@@ -57,6 +57,7 @@
 import { EventEmitter } from 'node:events';
 import log from '../util/logger.js';
 import { formatPhone } from './members.js';
+import { classifyFailure } from './server-outage.js';
 
 const logger = log.scope('request-pause');
 
@@ -174,14 +175,29 @@ export class RequestPause extends EventEmitter {
     this.now = now;
     this.plugins = null;
     this._replaying = null;
+    this.outage = null;
   }
 
   /** The plugins, by name, whose replayHeld() runs a held request. */
   attach(pluginManager) { this.plugins = pluginManager?.plugins ?? null; }
 
+  /**
+   * The media server's outage watch (src/core/server-outage.js). While the
+   * server is down requests are held as if paused, with the reason
+   * 'server-down', and run when it answers again - the operator, 2026-11-15:
+   * "requests that arrive during the outage are accepted and queued".
+   */
+  setOutage(watch) {
+    this.outage = watch ?? null;
+    this.outage?.on?.('change', () => this._changed());
+  }
+
   state() { return normalState(this.store.get('state', null)); }
   queueState() { return normalQueue(this.queueStore.get('state', null)); }
-  isPaused() { return this.state().paused; }
+  /** Held by hand from the panel, or by the media server being down. */
+  isPaused() { return this.state().paused || this.serverDown(); }
+  /** Is the media server down (src/core/server-outage.js)? */
+  serverDown() { return !!this.outage?.isDown?.(); }
   _held() { const v = this.store.get('held', []); return Array.isArray(v) ? v : []; }
   heldCount() { return this._held().length; }
 
@@ -247,6 +263,8 @@ export class RequestPause extends EventEmitter {
       })),
       replaying: !!this._replaying,
       queue: { paused: !!this.queue?.paused, since: q.paused ? q.since : null, by: q.paused ? q.by : null },
+      // The media server down: the panel's banner (server-outage.js).
+      outage: this.outage?.snapshot?.() ?? null,
     };
   }
 
@@ -325,18 +343,33 @@ export class RequestPause extends EventEmitter {
    * `reactOn` is where the ⏸️ goes when the message is a member's reaction.
    */
   async hold(ctx, msg, { plugin, kind = 'request', text = null, emoji = PAUSED_EMOJI, extra = {} }) {
+    const st = this.state();
+    // Held by the outage, not by an admin: said so in the journal, so the
+    // recovery knows it is the outage's to resume, and to the member.
+    const reason = st.paused ? 'paused' : (this.serverDown() ? 'server-down' : 'paused');
     const item = {
-      id: msg.id, plugin, kind, at: this.now(), msg: slimMessage(msg),
+      id: msg.id, plugin, kind, at: this.now(), msg: slimMessage(msg), reason,
       ...(text != null ? { text } : {}), ...extra,
     };
     this.store.set('held', [...this._held(), item]);
     this._flush();
-    const st = this.state();
     const who = formatPhone(msg.senderNumber) ?? msg.senderJid;
+    const why = reason === 'server-down'
+      ? `the media server is down (since ${clock(this.outage?.state?.().since)})`
+      : `requests paused since ${clock(st.since)} by ${st.by ?? 'someone'}`;
     (ctx?.log ?? logger).info(`⏸️ held ${kind === 'pick' ? 'a pick' : 'a request'} from ${who} in ${msg.chatJid}: `
-      + `"${String(text ?? msg.text ?? '').slice(0, 120)}" - requests paused since ${clock(st.since)} by ${st.by ?? 'someone'} `
-      + `(${this.heldCount()} held)`);
+      + `"${String(text ?? msg.text ?? '').slice(0, 120)}" - ${why} (${this.heldCount()} held)`);
     this._changed();
+    // The operator, 2026-11-15: "Tell the requester it's queued and the
+    // server is temporarily down." A reply, as well as the ⏸️ - a pause by
+    // hand is the admin's business, but an outage is news to the member.
+    if (reason === 'server-down' && kind !== 'pick' && !msg.reaction) {
+      try {
+        await (ctx?.bot ?? this.bot)?.sendText?.(msg.chatJid,
+          'Got it - the media server is temporarily down, so your request is queued and will run by itself when it\'s back.',
+          { quoted: msg, kind: 'critical' });
+      } catch (err) { (ctx?.log ?? logger).warn(`could not tell the member the server is down: ${err.message}`); }
+    }
     // 'critical': being told the request is on hold is the whole answer for
     // now, maybe for an hour - shed, it would look as if the bot missed it.
     //
@@ -352,6 +385,22 @@ export class RequestPause extends EventEmitter {
     try { await (ctx?.bot ?? this.bot)?.react?.(target, emoji || PAUSED_EMOJI, { kind: 'critical' }); }
     catch (err) { (ctx?.log ?? logger).warn(`could not react ${emoji} to a held request: ${err.message}`); }
     return item;
+  }
+
+  /**
+   * A request whose library lookup just failed: if that failure was the
+   * media server going down (confirmed by one check, server-outage.js), the
+   * request is held to run when it is back, and this resolves true. Not for
+   * a beta test, which is never held. The first request to meet an outage
+   * used to be answered ⚠️ and lost.
+   */
+  async holdIfServerDown(ctx, msg, err, opts) {
+    if (!this.outage || !msg) return false;
+    let down = this.serverDown();
+    if (!down && err && classifyFailure({ err }) === 'outage') down = await this.outage.suspect(err.message);
+    if (!down) return false;
+    await this.hold(ctx, msg, opts);
+    return true;
   }
 
   /**

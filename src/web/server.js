@@ -12,7 +12,7 @@ import { wantedEvents } from '../core/wanted.js';
 const logger = log.scope('web');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createServer({ configStore, bot, queue, linkQueue, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover = null, contentHealth = null, spareLinker = null, requestPause = null, wantedRecheck = null, discordWatch = null, arrivals = null }) {
+export function createServer({ configStore, bot, queue, linkQueue, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover = null, contentHealth = null, spareLinker = null, requestPause = null, wantedRecheck = null, discordWatch = null, arrivals = null, outage = null }) {
   const cfg = configStore.get();
   const app = express();
 
@@ -45,7 +45,7 @@ export function createServer({ configStore, bot, queue, linkQueue, pluginManager
   // timeout the super-admin changes reaches sessions that are already open.
   app.use(idleTimeout((user) => effectiveIdleMinutes(configStore.get().web, user?.username)));
 
-  app.use('/api', createApiRouter({ configStore, bot, queue, linkQueue, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover, contentHealth, spareLinker, requestPause, wantedRecheck, discordWatch, arrivals }));
+  app.use('/api', createApiRouter({ configStore, bot, queue, linkQueue, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover, contentHealth, spareLinker, requestPause, wantedRecheck, discordWatch, arrivals, outage }));
 
   /* Server-sent events: live status, queue, and log lines for the dashboard. */
   app.get('/events', (req, res) => {

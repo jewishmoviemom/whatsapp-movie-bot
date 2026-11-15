@@ -1549,6 +1549,29 @@ export const ROUTINES = [
     probe: inProcess(() => 'logged by sender, flushed every 10 minutes, reported by the hourly check'),
   },
   {
+    id: 'server-outage',
+    scope: 'in-process',
+    title: 'Everything paused while the media server is down, checked every 10 minutes',
+    why: 'A Jellyfin that stopped answering was met by every part of the bot on its own: each failed job retried at 30 s, '
+      + '1 min and 2 min and was then parked until the next restart, each new request was answered ⚠️, and on 2026-11-10 '
+      + 'fourteen requests were left part-posted by seven minutes of HTTP 500. The operator (2026-11-15): "pause everything '
+      + 'for now and try again in 10 minutes ... The box should not keep retrying." One confirmed failure pauses the queue '
+      + 'and holds new requests; every request to the server is refused without touching the network; one check every 10 '
+      + 'minutes; when it answers, what the outage held resumes, in order (src/core/server-outage.js).',
+    check: 'nothing to install: src/index.js wraps fetch for the media server\'s host and restores an outage at start; '
+      + 'the panel shows "Media server unreachable since ..." with Check now',
+    install: 'nothing: it runs whenever the bot runs',
+    userStep: null,
+    bootstrap: false,
+    code: [
+      { file: 'src/index.js', contains: 'installFetchGuard(outage)' },
+      { file: 'src/core/server-outage.js', contains: 'export class OutageWatch' },
+      { file: 'src/media/resume.js', contains: 'watch.waitForServer(' },
+    ],
+    files: [],
+    probe: inProcess(() => 'every request to the media server watched; while it is down, one check every 10 minutes'),
+  },
+  {
     id: 'wanted-recheck',
     scope: 'in-process',
     title: 'The wanted list checked against the library',

@@ -135,6 +135,7 @@
             <span id="req-pause-note" class="muted small"></span>
           </div>
           <div id="queue-paused-note" class="muted small hidden" style="margin-bottom:8px"></div>
+          <div id="queue-outage-note" class="small hidden" style="margin-bottom:8px;color:var(--danger)"></div>
           <div class="row gap" style="margin-bottom:10px">
             <input id="manual-add" placeholder="add a title to the queue…" class="flex1" style="margin:0">
             <button class="btn small primary" id="btn-manual-add">Queue</button>
@@ -161,6 +162,16 @@
              every request that arrives meanwhile gets ⏸️ and waits. Filled by
              renderRequestPause; the nudity-check cards by the content-check
              health. -->
+        <!-- The media server down (src/core/server-outage.js): everything is
+             paused and checked again every 10 minutes. Filled by
+             renderOutage, from the 'requestpause' push. -->
+        <div class="card server-down hidden" id="card-server-down">
+          <h2>⛔ Media server unreachable</h2>
+          <div id="server-down-line"></div>
+          <div id="server-down-sub" class="muted small"></div>
+          <button class="btn small" id="btn-outage-check" title="Ask the media server once now. The automatic check every 10 minutes keeps its schedule.">Check now</button>
+        </div>
+
         <div class="card req-paused hidden" id="card-req-paused">
           <h2>⏸️ Requests paused</h2>
           <div id="req-paused-line"></div>

@@ -18,6 +18,7 @@ import { noteDiskFull } from './media/disk-space.js';
 import { FileLogger } from './util/filelog.js';
 import { LockScheduler } from './core/lockdown.js';
 import { AlertWatcher } from './core/alerts.js';
+import { OutageWatch, installFetchGuard, NAMESPACE as OUTAGE_NS } from './core/server-outage.js';
 import { SpamGuard, spamConfig } from './core/spam-guard.js';
 import { ContentCheckHealth } from './core/content-check-health.js';
 import { runAdminCommand, backupOriginalDescriptions, auditAdminCommand, answerFor } from './core/admin-commands.js';
@@ -146,6 +147,16 @@ async function main() {
     queue, bot, audit: stateStore.namespace('audit'), getConfig: () => configStore.get(),
   });
   requestPause.restore();
+  // The media server down: everything paused, one check every 10 minutes,
+  // and what it held resumed when it answers (src/core/server-outage.js).
+  // Before any plugin loads, like the pause above: recovery looks the last
+  // process's films up, and in an outage that must not reach the server.
+  const outage = new OutageWatch({
+    store: stateStore.namespace(OUTAGE_NS), queue, requestPause, bot, getConfig: () => configStore.get(),
+  }).makeCurrent();
+  installFetchGuard(outage);
+  requestPause.setOutage(outage);
+  outage.restore();
   const pluginManager = new PluginManager({ bot, configStore, queue, linkQueue, stateStore, requestPause, contentHealth });
   requestPause.attach(pluginManager);
 
@@ -428,7 +439,7 @@ async function main() {
   // anyone having to ask for it again (src/core/wanted-recheck.js), and the
   // members who asked are re-run. The panel's POST /api/wanted/recheck runs
   // the same instance, so the two never overlap.
-  const wantedRecheck = new WantedRecheck({ configStore, stateStore, onRun: () => arrivalPass('after the wanted recheck') });
+  const wantedRecheck = new WantedRecheck({ configStore, stateStore, serverDown: () => outage.isDown(), onRun: () => arrivalPass('after the wanted recheck') });
   wantedRecheck.start();
 
   // The operator's support tickets with the Jellyfin host, read from their
@@ -447,7 +458,7 @@ async function main() {
   const ytDlpUpdater = new YtDlpUpdater();
   ytDlpUpdater.start();
 
-  const app = createServer({ configStore, bot, queue, linkQueue, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover, spareLinker, requestPause, wantedRecheck, discordWatch, arrivals, contentHealth });
+  const app = createServer({ configStore, bot, queue, linkQueue, pluginManager, stateStore, fileLogger, alerts, lockScheduler, failover, spareLinker, requestPause, wantedRecheck, discordWatch, arrivals, outage, contentHealth });
   await startServer(app, configStore);
   bot.on('state', (st) => {
     if (st.state !== 'connected') return;
@@ -559,6 +570,7 @@ async function main() {
     logger.info(`${signal} received, shutting down`);
     clearInterval(sweeper);
     wantedRecheck.stop();
+    outage.stop();
     discordWatch.stop();
     ytDlpUpdater.stop();
     queue.close();              // the fair order's hold timer

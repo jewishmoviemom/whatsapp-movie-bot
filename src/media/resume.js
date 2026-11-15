@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { currentOutage, classifyFailure } from '../core/server-outage.js';
 
 /**
  * Failures worth another attempt: the connection, the network or a file that
@@ -93,8 +94,10 @@ export function retryDelayMs(attempt, err) {
  * posted. `cancel(state)` is what the panel's Cancel does to it.
  */
 export class RetryBook {
-  constructor({ max = MAX_RETRIES, delayMs = retryDelayMs, log = null } = {}) {
+  constructor({ max = MAX_RETRIES, delayMs = retryDelayMs, log = null, outage = null } = {}) {
     this.max = max;
+    // The media server's outage watch; the process's own when not given.
+    this.outage = outage;
     this.delayMs = delayMs;
     this.log = log;
     this.attempts = new Map();      // key -> attempts booked so far
@@ -107,10 +110,22 @@ export class RetryBook {
   schedule(key, { bot, err = null, run, until = null, show = null }) {
     const booked = this.waiting.get(key);
     if (booked) return booked.attempt;
-    const attempt = (this.attempts.get(key) ?? 0) + 1;
+    // The media server down (src/core/server-outage.js): a failure that looks
+    // like it is checked once, and while the server is down a job waits for
+    // it instead of spending its attempts. Ten minutes of outage used to
+    // spend all three (30 s, 1 min, 2 min) and park the job until the next
+    // restart: fourteen requests part-posted on 2026-11-10.
+    const outage = this.outage ?? currentOutage();
+    if (outage && err && classifyFailure({ err }) === 'outage') {
+      Promise.resolve(outage.suspect(err?.message ?? 'a failed request')).catch(() => {});
+    }
+    let attempt = (this.attempts.get(key) ?? 0) + 1;
     if (attempt > this.max) {
-      this.attempts.delete(key);
-      return 0;
+      if (!outage?.isDown?.()) {
+        this.attempts.delete(key);
+        return 0;
+      }
+      attempt = this.max;
     }
     this.attempts.set(key, attempt);
 
@@ -122,35 +137,54 @@ export class RetryBook {
         queue.holdRetry({ key, label, kind, meta, attempt, max: this.max, waitingFor, cancel });
       } catch (e) { this.log?.warn?.(`could not show the retry of ${key}: ${e.message}`); }
     };
+    // Each returns the retry's run, so the outage's recovery can put the
+    // jobs back one at a time, in order (OutageWatch.goUp).
     const fire = () => {
-      if (this.waiting.get(key) !== entry) return;     // forgotten meanwhile
+      if (this.waiting.get(key) !== entry) return null;     // forgotten meanwhile
       this.waiting.delete(key);
       this._unshow(key, entry);
-      Promise.resolve()
+      return Promise.resolve()
         .then(() => run(attempt))
         .catch((e) => this.log?.error?.(`retry of ${key} failed to start: ${e.message}`));
     };
     const whenConnected = () => {
-      if (this.waiting.get(key) !== entry) return;
-      if (!bot || bot.isConnected()) fire();
-      else { shown('connection'); this._whenConnected(bot, key, fire); }
+      if (this.waiting.get(key) !== entry) return null;
+      if (!bot || bot.isConnected()) return fire();
+      shown('connection'); this._whenConnected(bot, key, fire);
+      return null;
     };
-    entry.timer = setTimeout(() => {
-      entry.timer = null;
+    const afterRoom = () => {
       if (!until) return whenConnected();
       shown('room');
       entry.abort = new AbortController();
-      Promise.resolve()
+      return Promise.resolve()
         .then(() => until(entry.abort.signal))
         .catch((e) => {
           if (entry.abort?.signal.aborted) return;
           this.log?.warn?.(`retry of ${key}: ${e.message} - trying it anyway`);
         })
-        .finally(() => {
+        .then(() => {
           const aborted = entry.abort?.signal.aborted;
           entry.abort = null;
-          if (!aborted) whenConnected();
+          if (!aborted) return whenConnected();
+          return null;
         });
+    };
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      // The server down: nothing is tried until it answers. The outage keeps
+      // the list and puts each back when it does; forget() takes it off.
+      const watch = this.outage ?? currentOutage();
+      if (watch?.isDown?.()) {
+        shown('server');
+        entry.abort = new AbortController();
+        watch.waitForServer({
+          key, signal: entry.abort.signal,
+          go: () => { if (this.waiting.get(key) !== entry) return null; entry.abort = null; return afterRoom(); },
+        });
+        return;
+      }
+      afterRoom();
     }, this.delayMs(attempt, err));
     // A retry waiting on the clock must not hold a stopping process open.
     entry.timer.unref?.();
