@@ -76,5 +76,67 @@ console.log('=== mobile keyboards do not mangle the username ===');
   ok(user.getAttribute('spellcheck') === 'false', 'and no spellcheck underline');
 }
 
+/* Since 2026-11-15, every browser on every device. The operator: "This
+   optimization for password manager login across all browsers of all device
+   types is very important". The form was submitted by fetch(), with its
+   submit stopped, and a password manager offers to save a login when it sees
+   a form submitted: Chrome guessed from the form disappearing, and Safari
+   (macOS, iPhone, iPad), Firefox and Samsung Internet saw nothing. So a fresh
+   sign-in is a real form post now (test/login-form-post.test.mjs has the
+   server's side); the panel's API-key and token fields are kept out of the
+   managers' reach, where Chrome and Safari had been offering the panel's own
+   password; and the password change carries the username, so the right
+   saved login is updated. */
+console.log('=== a fresh sign-in is a real form post ===');
+{
+  ok(form.getAttribute('method') === 'post' && form.getAttribute('action') === '/api/auth/login-form',
+    'the form posts to /api/auth/login-form itself');
+  ok(user.hasAttribute('required'), 'the username is required, as a sign-in form\'s is');
+  ok(user.getAttribute('aria-label') === 'Username' && pw.getAttribute('aria-label') === 'Password',
+    'each field is labelled for the managers that read labels');
+  const handler = app.slice(app.indexOf("$('gate-form').addEventListener('submit'"));
+  const first = handler.slice(0, handler.indexOf('e.preventDefault()'));
+  ok(/if \(!SETUP_MODE && !gateShownForExpiry\) \{[\s\S]*?return;\s*\}/.test(first),
+    'a fresh sign-in returns before preventDefault, so the browser submits the form');
+  ok(/sessionStorage\.setItem\('gate-user'/.test(first), 'the typed username is kept for a wrong password');
+  ok(/params\.get\('signin'\)/.test(app) && /history\.replaceState/.test(app), 'the page reads ?signin= and clears it');
+}
+
+console.log('=== where a sign-in goes by fetch(), the browser is told ===');
+{
+  ok(/new window\.PasswordCredential\(\{ id, password, name: id \}\)/.test(app) && /navigator\.credentials\.store/.test(app),
+    'the Credential Management API saves it (Chrome, Edge, Samsung Internet)');
+  const calls = app.match(/rememberLogin\(/g)?.length ?? 0;
+  ok(calls >= 4, `after the fetch sign-in and both password changes (${calls - 1} calls)`);
+  ok(/\$\('gate-user'\)\.value = 'superadmin';/.test(app), 'the first setup saves the login with its username');
+}
+
+console.log('=== the password change updates the saved login ===');
+{
+  const chpw = document.getElementById('chpw-form');
+  ok(chpw?.tagName === 'FORM', 'My account\'s password change is a form');
+  const u = document.getElementById('f-pw-user');
+  ok(u && u.getAttribute('autocomplete') === 'username' && chpw.contains(u), 'with the username in it');
+  ok(document.getElementById('f-pw-cur').getAttribute('autocomplete') === 'current-password'
+    && document.getElementById('f-pw-new').getAttribute('autocomplete') === 'new-password', 'current and new marked as such');
+  ok(/\$\('f-pw-user'\)\.value = u\?\.username/.test(app), 'filled with the signed-in admin');
+  ok(/\$\('chpw-form'\)\.addEventListener\('submit'/.test(app), 'and handled as a submit, so Enter works too');
+}
+
+console.log('=== no password manager fills the panel\'s login into a key or token ===');
+{
+  for (const id of ['f-omdbkey', 'f-tmdbkey', 'f-gemini-key', 'f-dl-apikey', 'dc-token', 'f-jf-key', 'f-plex-token',
+    'f-http-auth', 'f-jf-password', 'f-em-pass', 'na-pass', 'na-user']) {
+    const el = document.getElementById(id);
+    const ac = el?.getAttribute('autocomplete');
+    ok(el && (ac === 'off' || ac === 'new-password') && el.hasAttribute('data-1p-ignore')
+      && el.getAttribute('data-lpignore') === 'true' && el.getAttribute('data-bwignore') === 'true',
+    `${id}: never filled with the saved login (autocomplete=${ac}, 1Password/LastPass/Bitwarden told to ignore it)`);
+  }
+  const strays = [...document.querySelectorAll('input[type=password]')]
+    .filter((i) => !i.getAttribute('autocomplete') && !i.closest('#gate-form, #chpw-gate-form, #chpw-form'));
+  ok(strays.length === 0, `no password field anywhere without an autocomplete hint (${strays.map((i) => i.id).join(', ') || 'none'})`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

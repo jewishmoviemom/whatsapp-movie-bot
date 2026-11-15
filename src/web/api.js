@@ -193,6 +193,46 @@ export function createApiRouter({ configStore, bot, queue, linkQueue = null, plu
     res.status(401).json({ error: 'Wrong username or password' });
   });
 
+  /*
+   * The sign-in form, posted by the browser itself rather than by fetch().
+   *
+   * A password manager offers to save a login when it sees a real form
+   * submission. With the form's submit stopped and the password sent by
+   * fetch(), Chrome guessed from the form disappearing, and Safari (macOS,
+   * iPhone, iPad), Firefox and Samsung Internet mostly saw nothing - the
+   * operator (2026-11-15) wanted saving and filling to work "across all
+   * browsers of all device types". So a fresh sign-in is an ordinary POST,
+   * answered with a 303 back to the panel: on success with the session set,
+   * on failure with ?signin=wrong (or limited, refused), which the page reads
+   * and clears. The JSON /auth/login above stays for the sign-in after a
+   * session ends, which must not reload the page, and for the tests.
+   *
+   * A post from another site is refused (login CSRF): the Origin, when the
+   * browser sends one, must be this panel's own host.
+   */
+  router.post('/auth/login-form', express.urlencoded({ extended: false, limit: '16kb' }), (req, res) => {
+    const back = (why) => res.redirect(303, why ? `/?signin=${why}` : '/');
+    const origin = req.get('origin');
+    if (origin && origin !== 'null') {
+      let host = null;
+      try { host = new URL(origin).host; } catch { /* unreadable: refused below */ }
+      const ours = [req.get('host'), req.get('x-forwarded-host')].filter(Boolean).map((h) => String(h).split(',')[0].trim());
+      if (!host || !ours.includes(host)) return back('refused');
+    }
+    if (isRateLimited(req)) return back('limited');
+    const user = authenticate(configStore, req.body?.username, req.body?.password);
+    if (!user) {
+      recordFailure(req);
+      return back('wrong');
+    }
+    clearFailures(req);
+    req.session.user = user;
+    audit(req, 'login', 'with the sign-in form', res);
+    // On the disk before the redirect is followed, or the page asking
+    // /auth/status a moment later can find no session yet.
+    req.session.save(() => back(null));
+  });
+
   router.post('/auth/logout', (req, res) => {
     audit(req, 'logout', null, res);
     req.session.destroy(() => res.json({ ok: true }));
