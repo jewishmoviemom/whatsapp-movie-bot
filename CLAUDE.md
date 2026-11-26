@@ -214,6 +214,8 @@ src/
     discord-watch.js    their support tickets with the Jellyfin host, read every 30 min for the hourly check
     audit-filter.js     bucketing for the portal audit log
     beta.js             feature flags + the beta test group (see "beta first" below)
+    chat-backup/        a phone's WhatsApp backup (Android crypt12/14/15, iPhone) read and exported;
+                        WhatsApp-Chat-Exporter ported, nothing fetched (tools/export-chat-backup.mjs)
   media/                ffmpeg probe/convert, download, broadcast
   plugins/
     movie-requests/     OMDb -> rating gate -> Jellyfin -> queue
