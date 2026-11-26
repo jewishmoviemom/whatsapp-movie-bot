@@ -2918,3 +2918,41 @@ Treat the archive as a credential: it contains a live WhatsApp session and the
 key to every stored secret.
 
 `data/logs/` and `data/media/` are not worth backing up.
+
+## Exporting a phone's WhatsApp backup
+
+The bot keeps only what it sees; the phone's own WhatsApp backup holds every
+chat's whole past. `tools/export-chat-backup.mjs` reads one and writes it as
+web pages (`index.html`, a page per chat) and `chats.json`, under
+`data/reports/chat-export/<day>-<time>/` unless `--out` says otherwise.
+It is [WhatsApp-Chat-Exporter](https://github.com/KnugiHK/WhatsApp-Chat-Exporter)
+ported to `src/core/chat-backup/` (MIT, `NOTICE` there), recoded so it needs
+no Python packages, never asks PyPI for updates, writes pages that fetch
+nothing (the original loads Tailwind from a CDN in every page), and finds a
+crypt14 backup's offsets by testing one block per guess rather than decrypting
+the whole database up to 40,000 times (the operator, 2026-11-26).
+
+**Android.** On the phone: WhatsApp → Settings → Chats → Chat backup → End-to-end
+encrypted backup, on, with a 64-digit key (write it down), then Back up. Copy
+`Android/media/com.whatsapp/WhatsApp/Databases/msgstore.db.crypt15` to the box
+(and `Media/` beside the export for the pictures to open). Put the key in a file,
+never on the command line:
+
+```bash
+nano ~/wa-key.txt                    # the 64 digits; spaces are fine
+node tools/export-chat-backup.mjs ~/msgstore.db.crypt15 --key-file ~/wa-key.txt
+shred -u ~/wa-key.txt
+```
+
+An older crypt12/14 backup needs the phone's 158-byte `key` file instead
+(`/data/data/com.whatsapp/files/key`, root only). Names come from the
+contacts database, `--wa wa.db.crypt15`, when the phone backs it up.
+
+**iPhone.** A Finder or iTunes backup with "Encrypt local backup" off; give the
+folder (`~/Library/Application Support/MobileSync/Backup/<id>` on a Mac), or
+the `ChatStorage.sqlite` taken from it.
+
+`--chat "<name>"` exports only that chat (repeatable), `--dry` only counts. The
+decrypted database is the whole history in the clear: it is written 0600 to a
+private temporary folder and deleted as soon as it is read (`--keep-db <file>`
+keeps it). The pages and `chats.json` are 0600 too.
